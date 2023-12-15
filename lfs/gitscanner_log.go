@@ -165,7 +165,7 @@ func parseScannerLogOutput(cb GitScannerFoundPointer, direction LogDiffDirection
 
 // logPreviousVersions scans history for all previous versions of LFS pointers
 // from 'since' up to (but not including) the final state at ref
-func logPreviousSHAs(cb GitScannerFoundPointer, ref string, filter *filepathfilter.Filter, since time.Time) error {
+func logPreviousSHAs(cb GitScannerFoundPointer, ref string, filter *filepathfilter.Filter, since time.Time, withAdditions bool) error {
 	logArgs := []string{
 		fmt.Sprintf("--since=%v", git.FormatGitDate(since)),
 	}
@@ -180,6 +180,16 @@ func logPreviousSHAs(cb GitScannerFoundPointer, ref string, filter *filepathfilt
 	}
 
 	parseScannerLogOutput(cb, LogDiffDeletions, cmd, filter)
+
+	if withAdditions {
+		// Now we scan for additions to support a force pruned lfs cache.
+		cmd, err = git.Log(logArgs...)
+		if err != nil {
+			return err
+		}
+		parseScannerLogOutput(cb, LogDiffAdditions, cmd, filter)
+}
+
 	return nil
 }
 

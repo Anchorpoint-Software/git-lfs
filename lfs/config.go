@@ -25,6 +25,8 @@ type FetchPruneConfig struct {
 	PruneRecent bool
 	// Whether to delete everything pushed.
 	PruneForce bool
+	// Whether to delete everything in the current worktree.
+	PruneWorktree bool
 }
 
 func NewFetchPruneConfig(git config.Environment) FetchPruneConfig {

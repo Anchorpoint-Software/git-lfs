@@ -201,6 +201,6 @@ func scanPreviousVersions(t *testing.T, ref string, since time.Time) ([]*Wrapped
 		pointers = append(pointers, p)
 	})
 
-	err := gitscanner.ScanPreviousVersions(ref, since, nil)
+	err := gitscanner.ScanPreviousVersions(ref, since, false, nil)
 	return pointers, err
 }

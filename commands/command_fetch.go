@@ -224,7 +224,7 @@ func fetchPreviousVersions(ref string, since time.Time, filter *filepathfilter.F
 
 	tempgitscanner.Filter = filter
 
-	if err := tempgitscanner.ScanPreviousVersions(ref, since, nil); err != nil {
+	if err := tempgitscanner.ScanPreviousVersions(ref, since, false, nil); err != nil {
 		ExitWithError(err)
 	}
 
