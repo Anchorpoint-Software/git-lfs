@@ -141,7 +141,9 @@ by any commit in the `main` and `develop` branches
 * Fetch the LFS objects for 2 branches and a commit from origin
 +
 `git lfs fetch origin main mybranch e445b45c1c9c6282614f201b62778e4c0688b5c8`
-
+* Fetch the LFS objects for a branch but skip all LFS objects that are in mybranch 
++
+`git lfs fetch origin main ^mybranch`
 == SEE ALSO
 
 git-lfs-checkout(1), git-lfs-pull(1), git-lfs-prune(1), gitconfig(5).

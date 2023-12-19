@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"time"
+	"strings"
 
 	"github.com/git-lfs/git-lfs/v3/filepathfilter"
 	"github.com/git-lfs/git-lfs/v3/git"
@@ -60,6 +61,17 @@ func fetchCommand(cmd *cobra.Command, args []string) {
 		refs = []*git.Ref{ref}
 	}
 
+	var excludedRefs []string
+	var includedRefs []*git.Ref
+	for _, ref := range refs {
+		if strings.HasPrefix(ref.Sha, "^") {
+			excludedRefs = append(excludedRefs, strings.TrimPrefix(ref.Sha, "^"))
+		} else {
+			includedRefs = append(includedRefs, ref)
+		}
+	}
+	refs = includedRefs
+
 	success := true
 	include, exclude := getIncludeExcludeArgs(cmd)
 	fetchPruneCfg := lfs.NewFetchPruneConfig(cfg.Git)
@@ -91,7 +103,7 @@ func fetchCommand(cmd *cobra.Command, args []string) {
 		// Fetch refs sequentially per arg order; duplicates in later refs will be ignored
 		for _, ref := range refs {
 			Print("fetch: %s", tr.Tr.Get("Fetching reference %s", ref.Refspec()))
-			s := fetchRef(ref.Sha, filter)
+			s := fetchRef(ref.Sha, filter, excludedRefs)
 			success = success && s
 		}
 
@@ -114,7 +126,7 @@ func fetchCommand(cmd *cobra.Command, args []string) {
 	}
 }
 
-func pointersToFetchForRef(ref string, filter *filepathfilter.Filter) ([]*lfs.WrappedPointer, error) {
+func pointersToFetchForRef(ref string, filter *filepathfilter.Filter, excludedRefs []string) ([]*lfs.WrappedPointer, error) {
 	var pointers []*lfs.WrappedPointer
 	var multiErr error
 	tempgitscanner := lfs.NewGitScanner(cfg, func(p *lfs.WrappedPointer, err error) {
@@ -132,16 +144,22 @@ func pointersToFetchForRef(ref string, filter *filepathfilter.Filter) ([]*lfs.Wr
 
 	tempgitscanner.Filter = filter
 
-	if err := tempgitscanner.ScanTree(ref, nil); err != nil {
-		return nil, err
+	if len(excludedRefs) > 0 {
+		if err := tempgitscanner.ScanRefs([]string{ref}, excludedRefs, nil); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := tempgitscanner.ScanTree(ref, nil); err != nil {
+			return nil, err
+		}
 	}
-
+	
 	return pointers, multiErr
 }
 
 // Fetch all binaries for a given ref (that we don't have already)
-func fetchRef(ref string, filter *filepathfilter.Filter) bool {
-	pointers, err := pointersToFetchForRef(ref, filter)
+func fetchRef(ref string, filter *filepathfilter.Filter, excludedRefs []string) bool {
+	pointers, err := pointersToFetchForRef(ref, filter, excludedRefs)
 	if err != nil {
 		Panic(err, tr.Tr.Get("Could not scan for Git LFS files"))
 	}
@@ -247,7 +265,7 @@ func fetchRecent(fetchconf lfs.FetchPruneConfig, alreadyFetchedRefs []*git.Ref, 
 			} else {
 				uniqueRefShas[ref.Sha] = ref.Name
 				Print("fetch: %s", tr.Tr.Get("Fetching reference %s", ref.Name))
-				k := fetchRef(ref.Sha, filter)
+				k := fetchRef(ref.Sha, filter, nil)
 				ok = ok && k
 			}
 		}
