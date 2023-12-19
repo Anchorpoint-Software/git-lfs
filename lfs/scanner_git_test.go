@@ -122,6 +122,52 @@ func TestScanPreviousVersions(t *testing.T) {
 
 	now := time.Now()
 
+	outputs := addTestsCommits(repo, now)
+
+	// Previous commits excludes final state of each file, which is:
+	// file1.txt            [0] (unchanged since first commit so excluded)
+	// file2.txt            [1] (because [2] is on another branch so excluded)
+	// folder/nested.txt    [4] (updated at last commit)
+	// folder/nested2.txt   [3]
+
+	// The only changes which will be included are changes prior to final state
+	// where the '-' side of the diff is inside the date range
+
+	// 7 day limit excludes [0] commit, but includes state from that if there
+	// was a subsequent change
+	pointers, err := scanPreviousVersions(t, "master", now.AddDate(0, 0, -7))
+	assert.Equal(t, nil, err)
+
+	// Includes the following 'before' state at commits:
+	// folder/nested.txt [-diff at 4, ie 3, -diff at 3 ie 0]
+	// folder/nested2.txt [-diff at 3 ie 0]
+	// others are either on diff branches, before this window, or unchanged
+	expected := []*WrappedPointer{
+		{Name: "folder/nested.txt", Pointer: outputs[3].Files[0]},
+		{Name: "folder/nested.txt", Pointer: outputs[0].Files[2]},
+		{Name: "folder/nested2.txt", Pointer: outputs[0].Files[3]},
+	}
+	// Need to sort to compare equality
+	sort.Sort(test.WrappedPointersByOid(expected))
+	sort.Sort(test.WrappedPointersByOid(pointers))
+	assert.Equal(t, expected, pointers)
+}
+
+func scanPreviousVersions(t *testing.T, ref string, since time.Time) ([]*WrappedPointer, error) {
+	pointers := make([]*WrappedPointer, 0, 10)
+	gitscanner := NewGitScanner(config.New(), func(p *WrappedPointer, err error) {
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		pointers = append(pointers, p)
+	})
+
+	err := gitscanner.ScanPreviousVersions(ref, since, false, nil)
+	return pointers, err
+}
+
+func addTestsCommits(repo *test.Repo, now time.Time) []*test.CommitOutput {
 	inputs := []*test.CommitInput{
 		{ // 0
 			CommitDate: now.AddDate(0, 0, -20),
@@ -160,9 +206,22 @@ func TestScanPreviousVersions(t *testing.T) {
 			},
 		},
 	}
-	outputs := repo.AddCommits(inputs)
+	return repo.AddCommits(inputs)
+}
 
-	// Previous commits excludes final state of each file, which is:
+func TestScanPreviousVersionsWithAdditions(t *testing.T) {
+	repo := test.NewRepo(t)
+	repo.Pushd()
+	defer func() {
+		repo.Popd()
+		repo.Cleanup()
+	}()
+
+	now := time.Now()
+
+	outputs := addTestsCommits(repo, now)
+
+	// Previous commits with additions includes final state of each file that was recently changed, which is:
 	// file1.txt            [0] (unchanged since first commit so excluded)
 	// file2.txt            [1] (because [2] is on another branch so excluded)
 	// folder/nested.txt    [4] (updated at last commit)
@@ -172,18 +231,23 @@ func TestScanPreviousVersions(t *testing.T) {
 	// where the '-' side of the diff is inside the date range
 
 	// 7 day limit excludes [0] commit, but includes state from that if there
-	// was a subsequent chang
-	pointers, err := scanPreviousVersions(t, "master", now.AddDate(0, 0, -7))
+	// was a subsequent change
+	pointers, err := scanPreviousVersionsWithAdditions(t, "master", now.AddDate(0, 0, -7))
 	assert.Equal(t, nil, err)
 
-	// Includes the following 'before' state at commits:
-	// folder/nested.txt [-diff at 4, ie 3, -diff at 3 ie 0]
-	// folder/nested2.txt [-diff at 3 ie 0]
-	// others are either on diff branches, before this window, or unchanged
+	// Includes the following 'before' and after states at commits:
+	// folder/nested.txt [+-diff at 4, +-diff at 3]
+	// folder/nested2.txt [+-diff at 3]
 	expected := []*WrappedPointer{
+		// Before
 		{Name: "folder/nested.txt", Pointer: outputs[3].Files[0]},
 		{Name: "folder/nested.txt", Pointer: outputs[0].Files[2]},
 		{Name: "folder/nested2.txt", Pointer: outputs[0].Files[3]},
+
+		// After
+		{Name: "folder/nested.txt", Pointer: outputs[4].Files[0]},
+		{Name: "folder/nested.txt", Pointer: outputs[3].Files[0]},
+		{Name: "folder/nested2.txt", Pointer: outputs[3].Files[1]},
 	}
 	// Need to sort to compare equality
 	sort.Sort(test.WrappedPointersByOid(expected))
@@ -191,7 +255,7 @@ func TestScanPreviousVersions(t *testing.T) {
 	assert.Equal(t, expected, pointers)
 }
 
-func scanPreviousVersions(t *testing.T, ref string, since time.Time) ([]*WrappedPointer, error) {
+func scanPreviousVersionsWithAdditions(t *testing.T, ref string, since time.Time) ([]*WrappedPointer, error) {
 	pointers := make([]*WrappedPointer, 0, 10)
 	gitscanner := NewGitScanner(config.New(), func(p *WrappedPointer, err error) {
 		if err != nil {
@@ -201,6 +265,6 @@ func scanPreviousVersions(t *testing.T, ref string, since time.Time) ([]*Wrapped
 		pointers = append(pointers, p)
 	})
 
-	err := gitscanner.ScanPreviousVersions(ref, since, nil)
+	err := gitscanner.ScanPreviousVersions(ref, since, true, nil)
 	return pointers, err
 }

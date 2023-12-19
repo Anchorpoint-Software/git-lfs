@@ -30,6 +30,7 @@ var (
 	pruneVerifyArg      bool
 	pruneRecentArg      bool
 	pruneForceArg       bool
+	pruneWorktreeArg 	bool
 	pruneDoNotVerifyArg bool
 )
 
@@ -43,6 +44,7 @@ func pruneCommand(cmd *cobra.Command, args []string) {
 	verify := !pruneDoNotVerifyArg &&
 		(fetchPruneConfig.PruneVerifyRemoteAlways || pruneVerifyArg)
 	fetchPruneConfig.PruneRecent = pruneRecentArg || pruneForceArg
+	fetchPruneConfig.PruneWorktree = pruneWorktreeArg || pruneForceArg
 	fetchPruneConfig.PruneForce = pruneForceArg
 	prune(fetchPruneConfig, verify, pruneDryRunArg, pruneVerboseArg)
 }
@@ -371,12 +373,12 @@ func pruneTaskGetRetainedAtRef(gitscanner *lfs.GitScanner, ref string, retainCha
 }
 
 // Background task, must call waitg.Done() once at end
-func pruneTaskGetPreviousVersionsOfRef(gitscanner *lfs.GitScanner, ref string, since time.Time, retainChan chan string, errorChan chan error, waitg *sync.WaitGroup, sem *semaphore.Weighted) {
+func pruneTaskGetPreviousVersionsOfRef(gitscanner *lfs.GitScanner, ref string, since time.Time, pruneWorktree bool, retainChan chan string, errorChan chan error, waitg *sync.WaitGroup, sem *semaphore.Weighted) {
 	sem.Acquire(context.Background(), 1)
 	defer sem.Release(1)
 	defer waitg.Done()
 
-	err := gitscanner.ScanPreviousVersions(ref, since, func(p *lfs.WrappedPointer, err error) {
+	err := gitscanner.ScanPreviousVersions(ref, since, pruneWorktree, func(p *lfs.WrappedPointer, err error) {
 		if err != nil {
 			errorChan <- err
 			return
@@ -406,7 +408,7 @@ func pruneTaskGetRetainedCurrentAndRecentRefs(gitscanner *lfs.GitScanner, fetchc
 		return
 	}
 	commits.Add(ref.Sha)
-	if !fetchconf.PruneForce {
+	if !fetchconf.PruneWorktree {
 		waitg.Add(1)
 		go pruneTaskGetRetainedAtRef(gitscanner, ref.Sha, retainChan, errorChan, waitg, sem)
 	}
@@ -415,6 +417,11 @@ func pruneTaskGetRetainedCurrentAndRecentRefs(gitscanner *lfs.GitScanner, fetchc
 	if !fetchconf.PruneRecent && fetchconf.FetchRecentRefsDays > 0 {
 		pruneRefDays := fetchconf.FetchRecentRefsDays + fetchconf.PruneOffsetDays
 		tracerx.Printf("PRUNE: Retaining non-HEAD refs within %d (%d+%d) days", pruneRefDays, fetchconf.FetchRecentRefsDays, fetchconf.PruneOffsetDays)
+		
+		if fetchconf.PruneWorktree {
+			Exit(tr.Tr.Get("Cannot specify --worktree and lfs.fetchrecentrefsdays."))
+		}
+		
 		refsSince := time.Now().AddDate(0, 0, -pruneRefDays)
 		// Keep all recent refs including any recent remote branches
 		refs, err := git.RecentBranches(refsSince, fetchconf.FetchRecentRefsIncludeRemotes, "")
@@ -443,7 +450,7 @@ func pruneTaskGetRetainedCurrentAndRecentRefs(gitscanner *lfs.GitScanner, fetchc
 			}
 			commitsSince := summ.CommitDate.AddDate(0, 0, -pruneCommitDays)
 			waitg.Add(1)
-			go pruneTaskGetPreviousVersionsOfRef(gitscanner, commit, commitsSince, retainChan, errorChan, waitg, sem)
+			go pruneTaskGetPreviousVersionsOfRef(gitscanner, commit, commitsSince, fetchconf.PruneWorktree, retainChan, errorChan, waitg, sem)
 		}
 	}
 }
@@ -471,7 +478,7 @@ func pruneTaskGetRetainedUnpushed(gitscanner *lfs.GitScanner, fetchconf lfs.Fetc
 func pruneTaskGetRetainedWorktree(gitscanner *lfs.GitScanner, fetchconf lfs.FetchPruneConfig, retainChan chan string, errorChan chan error, waitg *sync.WaitGroup, sem *semaphore.Weighted) {
 	defer waitg.Done()
 
-	if fetchconf.PruneForce {
+	if fetchconf.PruneWorktree {
 		return
 	}
 
@@ -548,6 +555,7 @@ func init() {
 		cmd.Flags().BoolVarP(&pruneRecentArg, "recent", "", false, "Prune even recent objects")
 		cmd.Flags().BoolVarP(&pruneForceArg, "force", "f", false, "Prune everything that has been pushed")
 		cmd.Flags().BoolVarP(&pruneVerifyArg, "verify-remote", "c", false, "Verify that remote has LFS files before deleting")
+		cmd.Flags().BoolVarP(&pruneWorktreeArg, "worktree", "w", false, "Prune even objects in the current worktree")
 		cmd.Flags().BoolVar(&pruneDoNotVerifyArg, "no-verify-remote", false, "Override lfs.pruneverifyremotealways and don't verify")
 	})
 }

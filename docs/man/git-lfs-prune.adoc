@@ -49,7 +49,10 @@ gitignore(5).
 `--force`::
 `-f`::
   Prune all objects except unpushed objects, including objects required for
-  currently checked out refs. Implies `--recent`.
+  currently checked out refs. Implies `--recent` and `--worktree`.
+`--worktree`::
+`-w`::
+  Prune all objects that are currently checked out in the worktree.
 `--recent`::
   Prune even objects that would normally be preserved by the
   configuration options specified below in <<_recent_files>>.

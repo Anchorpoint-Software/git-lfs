@@ -252,14 +252,14 @@ func (s *GitScanner) ScanStashed(cb GitScannerFoundPointer) error {
 // Returns channel of pointers for *previous* versions that overlap that time.
 // Does not include pointers which were still in use at ref (use ScanRefsToChan
 // for that)
-func (s *GitScanner) ScanPreviousVersions(ref string, since time.Time, cb GitScannerFoundPointer) error {
+func (s *GitScanner) ScanPreviousVersions(ref string, since time.Time, withAdditions bool, cb GitScannerFoundPointer) error {
 	callback, err := firstGitScannerCallback(cb, s.foundPointer)
 	if err != nil {
 		return err
 	}
 
 	start := time.Now()
-	err = logPreviousSHAs(callback, ref, s.Filter, since)
+	err = logPreviousSHAs(callback, ref, s.Filter, since, withAdditions)
 	tracerx.PerformanceSince("ScanPreviousVersions", start)
 
 	return err

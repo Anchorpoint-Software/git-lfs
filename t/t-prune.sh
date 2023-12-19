@@ -1344,3 +1344,64 @@ begin_test "prune doesn't hang on long lines in stash diff"
     git lfs prune
 )
 end_test
+
+begin_test "prune --worktree"
+(
+  set -e
+
+  reponame="prune_worktree"
+  setup_remote_repo "remote_$reponame"
+
+  clone_repo "remote_$reponame" "clone_$reponame"
+
+  git lfs track "*.dat"
+
+  # generate content we'll use
+  content_inrepo="this is non recent data"
+  oid_inrepo=$(calc_oid "$content_inrepo")
+  content_new="this data will be recent and should not be deleted"
+  oid_new=$(calc_oid "$content_new")
+  content_stashed="This data will be stashed and should not be deleted"
+  oid_stashed=$(calc_oid "$content_stashed")
+
+  echo "[
+  {
+    \"CommitDate\":\"$(get_date -10d)\",
+    \"Files\":[
+      {\"Filename\":\"file.dat\",\"Size\":${#content_inrepo}, \"Data\":\"$content_inrepo\"}]
+  }
+  ]" | lfstest-testutils addcommits
+
+  # now add a recent file, and commit it
+  printf '%s' "$content_new" > file_new.dat
+  git add .
+  git commit -m 'Add file_new.dat'
+
+  # now modify the file, and stash it
+  printf '%s' "$content_stashed" > file_new.dat
+  git stash
+
+  git config lfs.fetchrecentrefsdays 0
+  git config lfs.fetchrecentcommitsdays 3
+
+  assert_local_object "$oid_new" "${#content_new}"
+  assert_local_object "$oid_inrepo" "${#content_inrepo}"
+  assert_local_object "$oid_stashed" "${#content_stashed}"
+
+  # prune data, should not delete.
+  git lfs prune --worktree 
+
+  assert_local_object "$oid_new" "${#content_new}"
+  assert_local_object "$oid_inrepo" "${#content_inrepo}"
+  assert_local_object "$oid_stashed" "${#content_stashed}"
+
+  git push origin HEAD
+
+  # prune data, should keep recent and stashed changes
+  git lfs prune --worktree
+
+  assert_local_object "$oid_new" "${#content_new}"
+  refute_local_object "$oid_inrepo" "${#content_inrepo}"
+  assert_local_object "$oid_stashed" "${#content_stashed}"
+)
+end_test
