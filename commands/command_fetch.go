@@ -3,8 +3,8 @@ package commands
 import (
 	"fmt"
 	"os"
-	"time"
 	"strings"
+	"time"
 
 	"github.com/git-lfs/git-lfs/v3/filepathfilter"
 	"github.com/git-lfs/git-lfs/v3/git"
@@ -153,7 +153,7 @@ func pointersToFetchForRef(ref string, filter *filepathfilter.Filter, excludedRe
 			return nil, err
 		}
 	}
-	
+
 	return pointers, multiErr
 }
 

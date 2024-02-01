@@ -188,7 +188,7 @@ func logPreviousSHAs(cb GitScannerFoundPointer, ref string, filter *filepathfilt
 			return err
 		}
 		parseScannerLogOutput(cb, LogDiffAdditions, cmd, filter)
-}
+	}
 
 	return nil
 }

@@ -30,7 +30,7 @@ var (
 	pruneVerifyArg      bool
 	pruneRecentArg      bool
 	pruneForceArg       bool
-	pruneWorktreeArg 	bool
+	pruneWorktreeArg    bool
 	pruneDoNotVerifyArg bool
 )
 
@@ -417,11 +417,11 @@ func pruneTaskGetRetainedCurrentAndRecentRefs(gitscanner *lfs.GitScanner, fetchc
 	if !fetchconf.PruneRecent && fetchconf.FetchRecentRefsDays > 0 {
 		pruneRefDays := fetchconf.FetchRecentRefsDays + fetchconf.PruneOffsetDays
 		tracerx.Printf("PRUNE: Retaining non-HEAD refs within %d (%d+%d) days", pruneRefDays, fetchconf.FetchRecentRefsDays, fetchconf.PruneOffsetDays)
-		
+
 		if fetchconf.PruneWorktree {
 			Exit(tr.Tr.Get("Cannot specify --worktree and lfs.fetchrecentrefsdays."))
 		}
-		
+
 		refsSince := time.Now().AddDate(0, 0, -pruneRefDays)
 		// Keep all recent refs including any recent remote branches
 		refs, err := git.RecentBranches(refsSince, fetchconf.FetchRecentRefsIncludeRemotes, "")
