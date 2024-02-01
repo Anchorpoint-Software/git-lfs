@@ -10,7 +10,7 @@ var (
 )
 
 func versionCommand(cmd *cobra.Command, args []string) {
-	Print("ap_1-" + lfshttp.UserAgent)
+	Print(lfshttp.UserAgent)
 
 	if lovesComics {
 		Print("Nothing may see Gah Lak Tus and survive!")

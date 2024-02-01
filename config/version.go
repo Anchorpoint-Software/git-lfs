@@ -22,7 +22,7 @@ func init() {
 		gitCommit = "; git " + GitCommit
 	}
 	if len(Vendor) == 0 {
-		Vendor = "GitHub"
+		Vendor = "Anchorpoint"
 	}
 	VersionDesc = fmt.Sprintf("git-lfs/%s (%s; %s %s; go %s%s)",
 		Version,
