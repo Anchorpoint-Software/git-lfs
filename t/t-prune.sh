@@ -737,6 +737,100 @@ begin_test "prune verify large numbers of refs"
 )
 end_test
 
+begin_test "prune safe"
+(
+  set -e
+
+  reponame="prune_safe"
+  setup_remote_repo "remote_$reponame"
+
+  clone_repo "remote_$reponame" "clone_$reponame"
+
+  git lfs track "*.dat" 2>&1 | tee track.log
+  grep "Tracking \"\*.dat\"" track.log
+
+  content_head="HEAD content"
+  content_index="Index content (not pruned)"
+  content_commit3="Content for commit 3 (prune)"
+  content_commit2_failverify="Content for commit 2 (prune - fail verify)"
+  content_commit1="Content for commit 1 (prune)"
+  oid_head=$(calc_oid "$content_head")
+  oid_index=$(calc_oid "$content_index")
+  oid_commit3=$(calc_oid "$content_commit3")
+  oid_commit2_failverify=$(calc_oid "$content_commit2_failverify")
+  oid_commit1=$(calc_oid "$content_commit1")
+
+  echo "oid_head: $oid_head"
+  echo "oid_index: $oid_index"
+  echo "oid_commit3: $oid_commit3"
+  echo "oid_commit2_failverify: $oid_commit2_failverify"
+  echo "oid_commit1: $oid_commit1"
+
+  echo "[
+  {
+    \"CommitDate\":\"$(get_date -50d)\",
+    \"Files\":[
+      {\"Filename\":\"file.dat\",\"Size\":${#content_commit1}, \"Data\":\"$content_commit1\"}]
+  },
+  {
+    \"CommitDate\":\"$(get_date -40d)\",
+    \"Files\":[
+      {\"Filename\":\"file.dat\",\"Size\":${#content_commit2_failverify}, \"Data\":\"$content_commit2_failverify\"}]
+  },
+  {
+    \"CommitDate\":\"$(get_date -35d)\",
+    \"Files\":[
+      {\"Filename\":\"file.dat\",\"Size\":${#content_commit3}, \"Data\":\"$content_commit3\"}]
+  },
+  {
+    \"CommitDate\":\"$(get_date -25d)\",
+    \"Files\":[
+      {\"Filename\":\"file.dat\",\"Size\":${#content_head}, \"Data\":\"$content_head\"}]
+  }
+  ]" | lfstest-testutils addcommits
+
+  # push all so no unpushed reason to not prune
+  git push origin main
+
+  # set no recents so max ability to prune normally
+  git config lfs.fetchrecentrefsdays 0
+  git config lfs.fetchrecentremoterefs true
+  git config lfs.fetchrecentcommitsdays 0
+  git config lfs.pruneoffsetdays 1
+
+  # confirm that it would prune with safe when no issues
+  git lfs prune --dry-run --safe --verbose 2>&1 | tee prune.log
+  grep "prune: 4 local objects, 1 retained, 3 verified with remote, done." prune.log
+  grep "prune: 3 files would be pruned" prune.log
+  grep "$oid_commit3" prune.log
+  grep "$oid_commit2_failverify" prune.log
+  grep "$oid_commit1" prune.log
+
+  # delete the file on the server to make safe skip it
+  delete_server_object "remote_$reponame" "$oid_commit2_failverify"
+
+  # add one file to the index only so that we can test that it is not pruned
+  echo -n "$content_index" > file.dat
+  git add file.dat
+  
+  # this should now skip the files, one is not on remote, the indexed file is retained
+  git lfs prune --safe 2>&1 | tee prune.log
+  grep "prune: 5 local objects, 2 retained, 2 verified with remote, 1 not on remote, done." prune.log
+  grep "prune: Deleting objects: 100% (2/2), done." prune.log
+
+  # The two files should not have been deleted
+  refute_local_object "$oid_commit1" "${#content_commit1}"
+  assert_local_object "$oid_commit2_failverify" "${#content_commit2_failverify}"
+  refute_local_object "$oid_commit3" "${#content_commit3}"
+  assert_local_object "$oid_index" "${#content_index}"
+
+  # now test without safe, should delete only the commited file
+  git lfs prune 2>&1 | tee prune.log
+  grep "prune: 3 local objects, 2 retained, done." prune.log
+  grep "prune: Deleting objects: 100% (1/1), done." prune.log
+)
+end_test
+
 begin_test "prune keep stashed changes"
 (
   set -e
