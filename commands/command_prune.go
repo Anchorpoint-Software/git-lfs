@@ -32,6 +32,7 @@ var (
 	pruneForceArg       bool
 	pruneWorktreeArg    bool
 	pruneDoNotVerifyArg bool
+	pruneSafeArg        bool
 )
 
 func pruneCommand(cmd *cobra.Command, args []string) {
@@ -43,10 +44,11 @@ func pruneCommand(cmd *cobra.Command, args []string) {
 	fetchPruneConfig := lfs.NewFetchPruneConfig(cfg.Git)
 	verify := !pruneDoNotVerifyArg &&
 		(fetchPruneConfig.PruneVerifyRemoteAlways || pruneVerifyArg)
+	safe := pruneSafeArg
 	fetchPruneConfig.PruneRecent = pruneRecentArg || pruneForceArg
 	fetchPruneConfig.PruneWorktree = pruneWorktreeArg || pruneForceArg
 	fetchPruneConfig.PruneForce = pruneForceArg
-	prune(fetchPruneConfig, verify, pruneDryRunArg, pruneVerboseArg)
+	prune(fetchPruneConfig, verify, safe, pruneDryRunArg, pruneVerboseArg)
 }
 
 type PruneProgressType int
@@ -55,6 +57,7 @@ const (
 	PruneProgressTypeLocal  = PruneProgressType(iota)
 	PruneProgressTypeRetain = PruneProgressType(iota)
 	PruneProgressTypeVerify = PruneProgressType(iota)
+	PruneProgressTypeSafe   = PruneProgressType(iota)
 )
 
 // Progress from a sub-task of prune
@@ -64,7 +67,7 @@ type PruneProgress struct {
 }
 type PruneProgressChan chan PruneProgress
 
-func prune(fetchPruneConfig lfs.FetchPruneConfig, verifyRemote, dryRun, verbose bool) {
+func prune(fetchPruneConfig lfs.FetchPruneConfig, verifyRemote, safe, dryRun, verbose bool) {
 	localObjects := make([]fs.Object, 0, 100)
 	retainedObjects := tools.NewStringSetWithCapacity(100)
 
@@ -141,7 +144,7 @@ func prune(fetchPruneConfig lfs.FetchPruneConfig, verifyRemote, dryRun, verbose 
 	var verifyc chan *tq.Transfer
 	var verifywait sync.WaitGroup
 
-	if verifyRemote {
+	if verifyRemote || safe {
 		verifyQueue = newDownloadCheckQueue(
 			getTransferManifestOperationRemote("download", fetchPruneConfig.PruneRemoteName),
 			fetchPruneConfig.PruneRemoteName,
@@ -173,7 +176,7 @@ func prune(fetchPruneConfig lfs.FetchPruneConfig, verifyRemote, dryRun, verbose 
 						humanize.FormatBytes(uint64(file.Size))))
 			}
 
-			if verifyRemote {
+			if verifyRemote || safe {
 				tracerx.Printf("VERIFYING: %v", file.Oid)
 
 				verifyQueue.Add(downloadTransfer(&lfs.WrappedPointer{
@@ -183,12 +186,24 @@ func prune(fetchPruneConfig lfs.FetchPruneConfig, verifyRemote, dryRun, verbose 
 		}
 	}
 
-	if verifyRemote {
+	if verifyRemote || safe {
 		verifyQueue.Wait()
 		verifywait.Wait()
+
+		if safe {
+			prunableObjectsLen := len(prunableObjects)
+			prunableObjects = pruneGetVerifiedPrunableObjects(prunableObjects, verifiedObjects)
+			if prunableObjectsLen != len(prunableObjects) {
+				progressChan <- PruneProgress{PruneProgressTypeSafe, prunableObjectsLen - len(prunableObjects)}
+			}
+		}
+
 		close(progressChan) // after verify but before check
 		progresswait.Wait()
-		pruneCheckVerified(prunableObjects, reachableObjects, verifiedObjects)
+
+		if verifyRemote {
+			pruneCheckVerified(prunableObjects, reachableObjects, verifiedObjects)
+		}
 	} else {
 		close(progressChan)
 		progresswait.Wait()
@@ -224,6 +239,22 @@ func logVerboseOutput(logger *tasklog.Logger, verboseOutput []string, numPrunabl
 			info.Logf("\n%s", item)
 		}
 	}
+}
+
+func pruneGetVerifiedPrunableObjects(prunableObjects []string, verifiedObjects tools.StringSet) []string {
+	verifiedPrunableObjects := make([]string, 0, len(verifiedObjects))
+	var unverified bytes.Buffer
+
+	for _, oid := range prunableObjects {
+		if verifiedObjects.Contains(oid) {
+			verifiedPrunableObjects = append(verifiedPrunableObjects, oid)
+		} else {
+			tracerx.Printf("UNVERIFIED: %v", oid)
+			unverified.WriteString(fmt.Sprintf(" * %v\n", oid))
+		}
+	}
+
+	return verifiedPrunableObjects
 }
 
 func pruneCheckVerified(prunableObjects []string, reachableObjects, verifiedObjects tools.StringSet) {
@@ -267,6 +298,7 @@ func pruneTaskDisplayProgress(progressChan PruneProgressChan, waitg *sync.WaitGr
 	localCount := 0
 	retainCount := 0
 	verifyCount := 0
+	notRemoteCount := 0
 	var msg string
 	for p := range progressChan {
 		switch p.ProgressType {
@@ -276,12 +308,17 @@ func pruneTaskDisplayProgress(progressChan PruneProgressChan, waitg *sync.WaitGr
 			retainCount++
 		case PruneProgressTypeVerify:
 			verifyCount++
+		case PruneProgressTypeSafe:
+			notRemoteCount += p.Count
 		}
 		msg = fmt.Sprintf("prune: %s, %s",
 			tr.Tr.GetN("%d local object", "%d local objects", localCount, localCount),
 			tr.Tr.GetN("%d retained", "%d retained", retainCount, retainCount))
 		if verifyCount > 0 {
 			msg += tr.Tr.GetN(", %d verified with remote", ", %d verified with remote", verifyCount, verifyCount)
+		}
+		if notRemoteCount > 0 {
+			msg += tr.Tr.GetN(", %d not on remote", ", %d not on remote", notRemoteCount, notRemoteCount)
 		}
 		task.Log(msg)
 	}
@@ -488,7 +525,7 @@ func pruneTaskGetRetainedWorktree(gitscanner *lfs.GitScanner, fetchconf lfs.Fetc
 	// Don't repeat any commits, worktrees are always on their own branches but
 	// may point to the same commit
 	commits := tools.NewStringSet()
-	
+
 	if !fetchconf.PruneWorktree {
 		// current HEAD is done elsewhere
 		headref, err := git.CurrentRef()
@@ -552,7 +589,6 @@ func pruneTaskGetRetainedIndex(gitscanner *lfs.GitScanner, ref string, workingDi
 	}
 }
 
-
 // Background task, must call waitg.Done() once at end
 func pruneTaskGetReachableObjects(gitscanner *lfs.GitScanner, outObjectSet *tools.StringSet, errorChan chan error, waitg *sync.WaitGroup, sem *semaphore.Weighted) {
 	defer waitg.Done()
@@ -582,5 +618,6 @@ func init() {
 		cmd.Flags().BoolVarP(&pruneVerifyArg, "verify-remote", "c", false, "Verify that remote has LFS files before deleting")
 		cmd.Flags().BoolVarP(&pruneWorktreeArg, "worktree", "w", false, "Prune even objects in the current worktree")
 		cmd.Flags().BoolVar(&pruneDoNotVerifyArg, "no-verify-remote", false, "Override lfs.pruneverifyremotealways and don't verify")
+		cmd.Flags().BoolVarP(&pruneSafeArg, "safe", "s", false, "Only delete LFS files that are available on the remote server")
 	})
 }
