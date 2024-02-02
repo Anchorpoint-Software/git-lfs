@@ -478,13 +478,9 @@ func pruneTaskGetRetainedUnpushed(gitscanner *lfs.GitScanner, fetchconf lfs.Fetc
 func pruneTaskGetRetainedWorktree(gitscanner *lfs.GitScanner, fetchconf lfs.FetchPruneConfig, retainChan chan string, errorChan chan error, waitg *sync.WaitGroup, sem *semaphore.Weighted) {
 	defer waitg.Done()
 
-	if fetchconf.PruneWorktree {
-		return
-	}
-
 	// Retain other worktree HEADs too
 	// Working copy, branch & maybe commit is different but repo is shared
-	allWorktreeRefs, err := git.GetAllWorkTreeHEADs(cfg.LocalGitStorageDir())
+	allWorktrees, err := git.GetAllWorkTrees(cfg.LocalGitStorageDir())
 	if err != nil {
 		errorChan <- err
 		return
@@ -492,20 +488,29 @@ func pruneTaskGetRetainedWorktree(gitscanner *lfs.GitScanner, fetchconf lfs.Fetc
 	// Don't repeat any commits, worktrees are always on their own branches but
 	// may point to the same commit
 	commits := tools.NewStringSet()
-	// current HEAD is done elsewhere
-	headref, err := git.CurrentRef()
-	if err != nil {
-		errorChan <- err
-		return
+	
+	if !fetchconf.PruneWorktree {
+		// current HEAD is done elsewhere
+		headref, err := git.CurrentRef()
+		if err != nil {
+			errorChan <- err
+			return
+		}
+
+		commits.Add(headref.Sha)
 	}
-	commits.Add(headref.Sha)
-	for _, ref := range allWorktreeRefs {
-		if commits.Add(ref.Sha) {
+
+	for _, worktree := range allWorktrees {
+		if !fetchconf.PruneWorktree && commits.Add(worktree.Ref.Sha) {
 			// Worktree is on a different commit
 			waitg.Add(1)
 			// Don't need to 'cd' to worktree since we share same repo
-			go pruneTaskGetRetainedAtRef(gitscanner, ref.Sha, retainChan, errorChan, waitg, sem)
+			go pruneTaskGetRetainedAtRef(gitscanner, worktree.Ref.Sha, retainChan, errorChan, waitg, sem)
 		}
+
+		// Always scan the index of the worktree
+		waitg.Add(1)
+		go pruneTaskGetRetainedIndex(gitscanner, worktree.Ref.Sha, worktree.Dir, retainChan, errorChan, waitg, sem)
 	}
 }
 
@@ -527,6 +532,26 @@ func pruneTaskGetRetainedStashed(gitscanner *lfs.GitScanner, retainChan chan str
 		return
 	}
 }
+
+// Background task, must call waitg.Done() once at end
+func pruneTaskGetRetainedIndex(gitscanner *lfs.GitScanner, ref string, workingDir string, retainChan chan string, errorChan chan error, waitg *sync.WaitGroup, sem *semaphore.Weighted) {
+	defer waitg.Done()
+
+	err := gitscanner.ScanIndex(ref, workingDir, func(p *lfs.WrappedPointer, err error) {
+		if err != nil {
+			errorChan <- err
+		} else {
+			retainChan <- p.Pointer.Oid
+			tracerx.Printf("RETAIN: %v index", p.Pointer.Oid)
+		}
+	})
+
+	if err != nil {
+		errorChan <- err
+		return
+	}
+}
+
 
 // Background task, must call waitg.Done() once at end
 func pruneTaskGetReachableObjects(gitscanner *lfs.GitScanner, outObjectSet *tools.StringSet, errorChan chan error, waitg *sync.WaitGroup, sem *semaphore.Weighted) {
