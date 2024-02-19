@@ -613,6 +613,7 @@ func init() {
 		cmd.Flags().BoolVarP(&pruneVerboseArg, "verbose", "v", false, "Print full details of what is/would be deleted")
 		cmd.Flags().BoolVarP(&pruneRecentArg, "recent", "", false, "Prune even recent objects")
 		cmd.Flags().BoolVarP(&pruneForceArg, "force", "f", false, "Prune everything that has been pushed")
+		cmd.Flags().BoolVarP(&pruneWorktreeArg, "worktree", "w", false, "Prune even objects in the current worktree")
 		cmd.Flags().BoolVarP(&pruneVerifyArg, "verify-remote", "c", false, "Verify that remote has reachable LFS files before deleting")
 		cmd.Flags().BoolVar(&pruneDoNotVerifyArg, "no-verify-remote", false, "Override lfs.pruneverifyremotealways and don't verify")
 		cmd.Flags().BoolVar(&pruneVerifyUnreachableArg, "verify-unreachable", false, "When using --verify-remote, additionally verify unreachable LFS files before deleting.")

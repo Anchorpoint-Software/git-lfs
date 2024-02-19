@@ -1420,6 +1420,139 @@ begin_test "prune --force"
 )
 end_test
 
+begin_test "prune --worktree --recent"
+(
+  # Must be same as --force
+  set -e
+
+  reponame="prune_worktree"
+  setup_remote_repo "remote_$reponame"
+
+  clone_repo "remote_$reponame" "clone_$reponame"
+
+  git lfs track "*.dat"
+
+  # generate content we'll use
+  content_inrepo="this is the original committed data"
+  oid_inrepo=$(calc_oid "$content_inrepo")
+  content_new="this data will be recent"
+  oid_new=$(calc_oid "$content_new")
+  content_stashed="This data will be stashed and should not be deleted"
+  oid_stashed=$(calc_oid "$content_stashed")
+
+  echo "[
+  {
+    \"CommitDate\":\"$(get_date -1d)\",
+    \"Files\":[
+      {\"Filename\":\"file.dat\",\"Size\":${#content_inrepo}, \"Data\":\"$content_inrepo\"}]
+  }
+  ]" | lfstest-testutils addcommits
+
+  # now modify the file, and commit it
+  printf '%s' "$content_new" > file.dat
+  git add .
+  git commit -m 'Update file.dat'
+
+  # now modify the file, and stash it
+  printf '%s' "$content_stashed" > file.dat
+  git stash
+
+  git config lfs.fetchrecentrefsdays 5
+  git config lfs.fetchrecentremoterefs true
+  git config lfs.fetchrecentcommitsdays 3
+
+  assert_local_object "$oid_new" "${#content_new}"
+  assert_local_object "$oid_inrepo" "${#content_inrepo}"
+  assert_local_object "$oid_stashed" "${#content_stashed}"
+
+  # prune data, should not delete.
+  git lfs prune --worktree --recent
+
+  assert_local_object "$oid_new" "${#content_new}"
+  assert_local_object "$oid_inrepo" "${#content_inrepo}"
+  assert_local_object "$oid_stashed" "${#content_stashed}"
+
+  git push origin HEAD
+
+  # prune data.
+  git lfs prune --worktree --recent
+
+  refute_local_object "$oid_new" "${#content_new}"
+  refute_local_object "$oid_inrepo" "${#content_inrepo}"
+  assert_local_object "$oid_stashed" "${#content_stashed}"
+)
+end_test
+
+begin_test "prune --worktree keep recent"
+(
+  set -e
+
+  reponame="prune_worktree_keep_recent"
+  setup_remote_repo "remote_$reponame"
+
+  clone_repo "remote_$reponame" "clone_$reponame"
+
+  git lfs track "*.dat"
+
+  # generate content we'll use
+  content_inrepo="this is the original committed data"
+  oid_inrepo=$(calc_oid "$content_inrepo")
+  content_new="this data will be recent"
+  oid_new=$(calc_oid "$content_new")
+  content_stashed="This data will be stashed and should not be deleted"
+  oid_stashed=$(calc_oid "$content_stashed")
+
+  echo "[
+  {
+    \"CommitDate\":\"$(get_date -5d)\",
+    \"Files\":[
+      {\"Filename\":\"file.dat\",\"Size\":${#content_inrepo}, \"Data\":\"$content_inrepo\"}]
+  }
+  ]" | lfstest-testutils addcommits
+
+  # now add a new recent file, and commit it
+  printf '%s' "$content_new" > file_new.dat
+  git add .
+  git commit -m 'Add file_new.dat'
+
+  # now add the file, and stash it
+  printf '%s' "$content_stashed" > file_new.dat
+  git stash
+
+  git config lfs.fetchrecentrefsdays 5
+  git config lfs.fetchrecentremoterefs true
+  git config lfs.fetchrecentcommitsdays 3
+  git config lfs.pruneoffsetdays 0
+
+  assert_local_object "$oid_new" "${#content_new}"
+  assert_local_object "$oid_inrepo" "${#content_inrepo}"
+  assert_local_object "$oid_stashed" "${#content_stashed}"
+
+  # expect lfs.fetchrecentrefsdays to not work with --worktree
+  git lfs prune --worktree 2>&1 | tee prune.log
+  grep "Cannot specify --worktree and lfs.fetchrecentrefsdays." prune.log
+
+  git config lfs.fetchrecentrefsdays 0
+  git config lfs.fetchrecentremoterefs false
+
+  # prune data, should not delete
+  git lfs prune --worktree
+
+  assert_local_object "$oid_new" "${#content_new}"
+  assert_local_object "$oid_inrepo" "${#content_inrepo}"
+  assert_local_object "$oid_stashed" "${#content_stashed}"
+
+  git push origin HEAD
+
+  # prune data, should delete worktree files and keep recent commits <3d
+  git lfs prune --worktree
+
+  assert_local_object "$oid_new" "${#content_new}"
+  refute_local_object "$oid_inrepo" "${#content_inrepo}"
+  assert_local_object "$oid_stashed" "${#content_stashed}"
+)
+end_test
+
 begin_test "prune does not fail on empty files"
 (
   set -e
