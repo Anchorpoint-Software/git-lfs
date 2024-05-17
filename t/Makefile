@@ -5,6 +5,10 @@ DEFAULT_TEST_TARGET ?= test
 
 GO ?= go
 
+# GOTOOLCHAIN is an environment variable which, when set to 'local',
+# prevents Go from downloading and running non-local versions of itself.
+export GOTOOLCHAIN = local
+
 ifeq ($(OS),Windows_NT)
 X ?= .exe
 else
@@ -22,6 +26,7 @@ TEST_CMDS += ../bin/lfstest-badpathcheck$X
 TEST_CMDS += ../bin/lfstest-count-tests$X
 TEST_CMDS += ../bin/lfstest-customadapter$X
 TEST_CMDS += ../bin/lfstest-gitserver$X
+TEST_CMDS += ../bin/lfstest-nanomtime$X
 TEST_CMDS += ../bin/lfstest-realpath$X
 TEST_CMDS += ../bin/lfstest-standalonecustomadapter$X
 TEST_CMDS += ../bin/lfstest-testutils$X
@@ -54,7 +59,7 @@ clean :
 	$(RM) $(TEST_CMDS)
 
 ../bin/%$X : cmd/%.go
-	go build -o $@ $^
+	$(GO) build -o $@ $^
 
 ../bin/git-lfs-test-server-api$X : $(TEST_API_SRCS)
-	go build -o $@ $^
+	$(GO) build -o $@ $^

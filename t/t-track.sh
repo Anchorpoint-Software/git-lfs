@@ -124,7 +124,12 @@ begin_test "track directory"
   cd dir
   git init
 
-  git lfs track "foo bar\\*" | tee track.txt
+  if [ "$IS_WINDOWS" -eq 1 ]
+  then
+    git lfs track "foo bar\\*" | tee track.txt
+  else
+    git lfs track "foo bar/*" | tee track.txt
+  fi
   [ "foo[[:space:]]bar/* filter=lfs diff=lfs merge=lfs -text" = "$(cat .gitattributes)" ]
   [ "Tracking \"foo bar/*\"" = "$(cat track.txt)" ]
 
@@ -370,9 +375,11 @@ begin_test "track blocklisted files by name"
 
   touch .gitattributes
   git add .gitattributes
+  git commit -m 'Initial commit'
 
-  git lfs track .gitattributes 2>&1 > track.log
+  git lfs track .gitattributes 2>&1 > track.log && exit 1
   grep "Pattern '.gitattributes' matches forbidden file '.gitattributes'" track.log
+  [ -z "$(git status --porcelain | grep -v '^??')" ]
 )
 end_test
 
@@ -387,9 +394,15 @@ begin_test "track blocklisted files with glob"
 
   touch .gitattributes
   git add .gitattributes
+  git commit -m 'Initial commit'
 
-  git lfs track ".git*" 2>&1 > track.log
+  git lfs track ".git*" 2>&1 > track.log && exit 1
   grep "Pattern '.git\*' matches forbidden file" track.log
+  [ -z "$(git status --porcelain | grep -v '^??')" ]
+
+  git lfs track "*" 2>&1 > track.log && exit 1
+  grep "Pattern '\*' matches forbidden file" track.log
+  [ -z "$(git status --porcelain | grep -v '^??')" ]
 )
 end_test
 
@@ -615,6 +628,13 @@ end_test
 begin_test "track (system gitattributes)"
 (
   set -e
+  gitversion=$(git version | cut -d" " -f3)
+  set +e
+  compare_version "$gitversion" 2.42.0
+  result=$?
+  set -e
+  # We no longer read the PREFIX variable as of Git 2.42.0.
+  [ "$result" -ne "$VERSION_LOWER" ] && exit 0
 
   reponame="track-system-gitattributes"
   git init "$reponame"
@@ -692,15 +712,20 @@ begin_test "track: escaped glob pattern with spaces in .gitattributes"
   # None of these characters are valid in the Win32 subsystem.
   [ "$IS_WINDOWS" -eq 1 ] && exit 0
 
-  reponame="track-escaped-glob"
+  reponame="track-escaped-glob-spaces"
   git init "$reponame"
   cd "$reponame"
 
-  filename="*[foo] bar?.txt"
+  # Note that the \n is literally just that; it is not a newline.
+  filename='*[foo] \n bar?.txt'
   contents='I need escaping'
   contents_oid=$(calc_oid "$contents")
 
-  git lfs track --filename "$filename"
+  git lfs track --filename "$filename" >output 2>&1
+  # This error would occur if `git ls-files` didn't handle the backslash
+  # properly.
+  grep 'Error marking' output && exit 1
+  rm -f output
   git add .
   cat .gitattributes
 

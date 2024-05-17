@@ -11,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -535,13 +534,20 @@ func ValidateRemote(remote string) error {
 	if err != nil {
 		return err
 	}
+	return ValidateRemoteFromList(remotes, remote)
+}
+
+// ValidateRemote checks that a named remote is valid for use given a list from
+// RemoteList.  This is completely identical to ValidateRemote, except that it
+// allows caching the remote list.
+func ValidateRemoteFromList(remotes []string, remote string) error {
 	for _, r := range remotes {
 		if r == remote {
 			return nil
 		}
 	}
 
-	if err = ValidateRemoteURL(remote); err == nil {
+	if err := ValidateRemoteURL(remote); err == nil {
 		return nil
 	}
 
@@ -930,7 +936,7 @@ func GetAllWorkTrees(storageDir string) ([]*Worktree, error) {
 
 // Manually parse a reference file like HEAD and return the Ref it resolves to
 func parseRefFile(filename string) (*Ref, error) {
-	bytes, err := ioutil.ReadFile(filename)
+	bytes, err := os.ReadFile(filename)
 	if err != nil {
 		return nil, err
 	}
@@ -1350,10 +1356,10 @@ func GetTrackedFiles(pattern string) ([]string, error) {
 
 	var ret []string
 	cmd, err := gitNoLFS(
-		"-c", "core.quotepath=false", // handle special chars in filenames
 		"ls-files",
 		"--ignored",
 		"--cached", // include things which are staged but not committed right now
+		"-z",       // handle special chars in filenames
 		"-x",
 		safePattern)
 	if err != nil {
@@ -1366,6 +1372,7 @@ func GetTrackedFiles(pattern string) ([]string, error) {
 	}
 	cmd.Start()
 	scanner := bufio.NewScanner(outp)
+	scanner.Split(tools.SplitOnNul)
 	for scanner.Scan() {
 		line := scanner.Text()
 
