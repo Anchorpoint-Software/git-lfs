@@ -2,10 +2,11 @@ package lfs
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"encoding/hex"
 	"io"
 	"os"
+
+	"github.com/minio/sha256-simd"
 
 	"github.com/git-lfs/git-lfs/v3/errors"
 	"github.com/git-lfs/git-lfs/v3/tools"

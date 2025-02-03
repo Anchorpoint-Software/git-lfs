@@ -9,7 +9,6 @@ import (
 	"compress/gzip"
 	"crypto/rand"
 	"crypto/rsa"
-	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -36,6 +35,8 @@ import (
 	"sync"
 	"time"
 	"unicode"
+
+	"github.com/minio/sha256-simd"
 )
 
 var (

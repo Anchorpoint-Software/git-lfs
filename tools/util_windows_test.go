@@ -4,12 +4,13 @@
 package tools
 
 import (
-	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
 	"testing"
+
+	"github.com/minio/sha256-simd"
 
 	"github.com/git-lfs/git-lfs/v3/errors"
 

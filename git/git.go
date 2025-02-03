@@ -6,7 +6,6 @@ import (
 	"bufio"
 	"bytes"
 	"crypto/sha1"
-	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -19,6 +18,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/minio/sha256-simd"
 
 	lfserrors "github.com/git-lfs/git-lfs/v3/errors"
 	"github.com/git-lfs/git-lfs/v3/subprocess"

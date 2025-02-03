@@ -2,13 +2,14 @@ package main
 
 import (
 	"bufio"
-	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"math/rand"
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/minio/sha256-simd"
 
 	"github.com/git-lfs/git-lfs/v3/errors"
 	"github.com/git-lfs/git-lfs/v3/fs"
