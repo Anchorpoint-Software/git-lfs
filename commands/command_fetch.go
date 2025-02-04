@@ -3,6 +3,7 @@ package commands
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -17,9 +18,10 @@ import (
 )
 
 var (
-	fetchRecentArg bool
-	fetchAllArg    bool
-	fetchPruneArg  bool
+	fetchRecentArg      bool
+	fetchAllArg         bool
+	fetchPruneArg       bool
+	fetchPlaceholderArg bool
 )
 
 func getIncludeExcludeArgs(cmd *cobra.Command) (include, exclude *string) {
@@ -80,6 +82,10 @@ func fetchCommand(cmd *cobra.Command, args []string) {
 		if fetchRecentArg {
 			Exit(tr.Tr.Get("Cannot combine --all with --recent"))
 		}
+		if !fetchPlaceholderArg {
+			// Default to fetching placeholders when fetching all
+			fetchPlaceholderArg = true
+		}
 		if include != nil || exclude != nil {
 			Exit(tr.Tr.Get("Cannot combine --all with --include or --exclude"))
 		}
@@ -103,12 +109,12 @@ func fetchCommand(cmd *cobra.Command, args []string) {
 		// Fetch refs sequentially per arg order; duplicates in later refs will be ignored
 		for _, ref := range refs {
 			Print("fetch: %s", tr.Tr.Get("Fetching reference %s", ref.Refspec()))
-			s := fetchRef(ref.Sha, filter, excludedRefs)
+			s := fetchRef(ref.Sha, filter, excludedRefs, fetchPlaceholderArg)
 			success = success && s
 		}
 
 		if fetchRecentArg || fetchPruneCfg.FetchRecentAlways {
-			s := fetchRecent(fetchPruneCfg, refs, filter)
+			s := fetchRecent(fetchPruneCfg, refs, filter, fetchPlaceholderArg)
 			success = success && s
 		}
 	}
@@ -128,9 +134,10 @@ func fetchCommand(cmd *cobra.Command, args []string) {
 	}
 }
 
-func pointersToFetchForRef(ref string, filter *filepathfilter.Filter, excludedRefs []string) ([]*lfs.WrappedPointer, error) {
+func pointersToFetchForRef(ref string, filter *filepathfilter.Filter, excludedRefs []string, fetchPlaceholder bool) ([]*lfs.WrappedPointer, error) {
 	var pointers []*lfs.WrappedPointer
 	var multiErr error
+	cwd := cfg.LocalWorkingDir()
 	tempgitscanner := lfs.NewGitScanner(cfg, func(p *lfs.WrappedPointer, err error) {
 		if err != nil {
 			if multiErr != nil {
@@ -138,6 +145,10 @@ func pointersToFetchForRef(ref string, filter *filepathfilter.Filter, excludedRe
 			} else {
 				multiErr = err
 			}
+			return
+		}
+
+		if !fetchPlaceholder && isPlaceholderFile(filepath.Join(cwd, p.Name)) {
 			return
 		}
 
@@ -160,8 +171,8 @@ func pointersToFetchForRef(ref string, filter *filepathfilter.Filter, excludedRe
 }
 
 // Fetch all binaries for a given ref (that we don't have already)
-func fetchRef(ref string, filter *filepathfilter.Filter, excludedRefs []string) bool {
-	pointers, err := pointersToFetchForRef(ref, filter, excludedRefs)
+func fetchRef(ref string, filter *filepathfilter.Filter, excludedRefs []string, fetchPlaceholder bool) bool {
+	pointers, err := pointersToFetchForRef(ref, filter, excludedRefs, fetchPlaceholder)
 	if err != nil {
 		Panic(err, tr.Tr.Get("Could not scan for Git LFS files"))
 	}
@@ -212,12 +223,17 @@ func fetchRefs(refs []string) bool {
 
 // Fetch all previous versions of objects from since to ref (not including final state at ref)
 // So this will fetch all the '-' sides of the diff from since to ref
-func fetchPreviousVersions(ref string, since time.Time, filter *filepathfilter.Filter) bool {
+func fetchPreviousVersions(ref string, since time.Time, filter *filepathfilter.Filter, fetchPlaceholder bool) bool {
 	var pointers []*lfs.WrappedPointer
+	cwd := cfg.LocalWorkingDir()
 
 	tempgitscanner := lfs.NewGitScanner(cfg, func(p *lfs.WrappedPointer, err error) {
 		if err != nil {
 			Panic(err, tr.Tr.Get("Could not scan for Git LFS previous versions"))
+			return
+		}
+
+		if !fetchPlaceholder && isPlaceholderFile(filepath.Join(cwd, p.Name)) {
 			return
 		}
 
@@ -234,7 +250,7 @@ func fetchPreviousVersions(ref string, since time.Time, filter *filepathfilter.F
 }
 
 // Fetch recent objects based on config
-func fetchRecent(fetchconf lfs.FetchPruneConfig, alreadyFetchedRefs []*git.Ref, filter *filepathfilter.Filter) bool {
+func fetchRecent(fetchconf lfs.FetchPruneConfig, alreadyFetchedRefs []*git.Ref, filter *filepathfilter.Filter, fetchPlaceholder bool) bool {
 	if fetchconf.FetchRecentRefsDays == 0 && fetchconf.FetchRecentCommitsDays == 0 {
 		return true
 	}
@@ -267,7 +283,7 @@ func fetchRecent(fetchconf lfs.FetchPruneConfig, alreadyFetchedRefs []*git.Ref, 
 			} else {
 				uniqueRefShas[ref.Sha] = ref.Name
 				Print("fetch: %s", tr.Tr.Get("Fetching reference %s", ref.Name))
-				k := fetchRef(ref.Sha, filter, nil)
+				k := fetchRef(ref.Sha, filter, nil, fetchPlaceholder)
 				ok = ok && k
 			}
 		}
@@ -289,7 +305,7 @@ func fetchRecent(fetchconf lfs.FetchPruneConfig, alreadyFetchedRefs []*git.Ref, 
 				refName,
 			))
 			commitsSince := summ.CommitDate.AddDate(0, 0, -fetchconf.FetchRecentCommitsDays)
-			k := fetchPreviousVersions(commit, commitsSince, filter)
+			k := fetchPreviousVersions(commit, commitsSince, filter, fetchPlaceholder)
 			ok = ok && k
 		}
 
@@ -439,5 +455,6 @@ func init() {
 		cmd.Flags().BoolVarP(&fetchRecentArg, "recent", "r", false, "Fetch recent refs & commits")
 		cmd.Flags().BoolVarP(&fetchAllArg, "all", "a", false, "Fetch all LFS files ever referenced")
 		cmd.Flags().BoolVarP(&fetchPruneArg, "prune", "p", false, "After fetching, prune old data")
+		cmd.Flags().BoolVarP(&fetchPlaceholderArg, "placeholder", "v", false, "Fetch LFS files for placeholder (virtual) files")
 	})
 }

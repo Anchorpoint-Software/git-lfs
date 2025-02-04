@@ -11,3 +11,7 @@ func cleanRootPath(pattern string) string {
 func osLineEnding() string {
 	return "\n"
 }
+
+func isPlaceholderFile(path string) bool {
+	return false
+}

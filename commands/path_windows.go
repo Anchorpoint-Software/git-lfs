@@ -4,10 +4,12 @@
 package commands
 
 import (
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
+	"syscall"
 
 	"github.com/git-lfs/git-lfs/v3/subprocess"
 )
@@ -64,4 +66,43 @@ func winPathHasDrive(pattern string) bool {
 	}
 
 	return winBashRe.MatchString(pattern)
+}
+
+const (
+	FILE_ATTRIBUTE_RECALL_ON_OPEN        = 0x00040000
+	FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS = 0x00400000
+)
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return !os.IsNotExist(err)
+}
+
+func isPlaceholderFile(path string) bool {
+	exists := fileExists(path)
+	if !exists {
+		// assume it's a placeholder if the file doesn't exist (the parent folder might be virtual)
+		// any call to the smudge filer will still download the file
+		return true
+	}
+
+	pointer, err := syscall.UTF16PtrFromString(path)
+	if err != nil {
+		return false
+	}
+
+	attributes, err := syscall.GetFileAttributes(pointer)
+	if err != nil {
+		return false
+	}
+
+	if attributes&FILE_ATTRIBUTE_RECALL_ON_OPEN != 0 {
+		return true
+	}
+
+	if attributes&FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS != 0 {
+		return true
+	}
+
+	return false
 }
