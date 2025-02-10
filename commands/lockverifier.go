@@ -76,10 +76,7 @@ func (lv *lockVerifier) Verify(ref *git.Ref) {
 				}
 			}
 		}
-	} else if lv.verifyState == verifyStateUnknown {
-		Error(tr.Tr.Get("Locking support detected on remote %q. Consider enabling it with:", cfg.PushRemote()))
-		Error("  $ git config lfs.%s.locksverify true", lv.endpoint.Url)
-	}
+	} 
 
 	lv.addLocks(ref, ours, lv.ourLocks)
 	lv.addLocks(ref, theirs, lv.theirLocks)
