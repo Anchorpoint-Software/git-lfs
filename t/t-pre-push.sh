@@ -1089,31 +1089,32 @@ begin_test "pre-push locks verify 501 with verification unset"
 )
 end_test
 
-begin_test "pre-push locks verify 200"
-(
-  set -e
+# Disabled for Anchorpoint branch as we don't want git lfs to spam the Locking support detected error
+# begin_test "pre-push locks verify 200"
+# (
+#   set -e
 
-  reponame="lock-verify-200"
-  setup_remote_repo "$reponame"
-  clone_repo "$reponame" "$reponame"
+#   reponame="lock-verify-200"
+#   setup_remote_repo "$reponame"
+#   clone_repo "$reponame" "$reponame"
 
-  endpoint="$(repo_endpoint $GITSERVER $reponame)"
-  [ -z "$(git config "lfs.$endpoint.locksverify")" ]
+#   endpoint="$(repo_endpoint $GITSERVER $reponame)"
+#   [ -z "$(git config "lfs.$endpoint.locksverify")" ]
 
-  contents="example"
-  contents_oid="$(calc_oid "$contents")"
-  printf "%s" "$contents" > a.dat
-  git lfs track "*.dat"
-  git add .gitattributes a.dat
-  git commit --message "initial commit"
+#   contents="example"
+#   contents_oid="$(calc_oid "$contents")"
+#   printf "%s" "$contents" > a.dat
+#   git lfs track "*.dat"
+#   git add .gitattributes a.dat
+#   git commit --message "initial commit"
 
-  git push origin main 2>&1 | tee push.log
+#   git push origin main 2>&1 | tee push.log
 
-  grep "Locking support detected on remote \"origin\"." push.log
-  grep "git config lfs.$endpoint.locksverify true" push.log
-  assert_server_object "$reponame" "$contents_oid"
-)
-end_test
+#   grep "Locking support detected on remote \"origin\"." push.log
+#   grep "git config lfs.$endpoint.locksverify true" push.log
+#   assert_server_object "$reponame" "$contents_oid"
+# )
+# end_test
 
 begin_test "pre-push locks verify 403 with verification enabled"
 (
