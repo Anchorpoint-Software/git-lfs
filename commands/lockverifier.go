@@ -76,7 +76,7 @@ func (lv *lockVerifier) Verify(ref *git.Ref) {
 				}
 			}
 		}
-	} 
+	}
 
 	lv.addLocks(ref, ours, lv.ourLocks)
 	lv.addLocks(ref, theirs, lv.theirLocks)
