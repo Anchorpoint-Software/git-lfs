@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -22,6 +23,7 @@ var (
 	fetchAllArg         bool
 	fetchPruneArg       bool
 	fetchPlaceholderArg bool
+	fetchStdinArg       bool
 )
 
 func getIncludeExcludeArgs(cmd *cobra.Command) (include, exclude *string) {
@@ -92,6 +94,9 @@ func fetchCommand(cmd *cobra.Command, args []string) {
 		if len(cfg.FetchIncludePaths()) > 0 || len(cfg.FetchExcludePaths()) > 0 {
 			Print(tr.Tr.Get("Ignoring global include / exclude paths to fulfil --all"))
 		}
+		if fetchStdinArg {
+			Exit(tr.Tr.Get("Cannot combine --all with --stdin"))
+		}
 
 		if len(args) > 1 {
 			refShas := make([]string, 0, len(refs))
@@ -103,7 +108,36 @@ func fetchCommand(cmd *cobra.Command, args []string) {
 			success = fetchAll()
 		}
 
-	} else { // !all
+	} else if fetchStdinArg {
+		scanner := bufio.NewScanner(os.Stdin)
+		for {
+			if !scanner.Scan() {
+				break
+			}
+			path := scanner.Text()
+
+			if !scanner.Scan() {
+				break
+			}
+			oid := scanner.Text()
+
+			if !scanner.Scan() {
+				break
+			}
+			pointerData := scanner.Text()
+			pointerData = strings.ReplaceAll(pointerData, "\\n", "\n")
+			pointerDataReader := strings.NewReader(pointerData)
+
+			p, err := lfs.DecodePointer(pointerDataReader)
+			if err != nil {
+				Exit(tr.Tr.Get("Could not decode pointer: %v", err))
+			}
+
+			wrappedPointer := &lfs.WrappedPointer{Name: path, Pointer: p, Sha1: oid}
+			s := fetchAndReportToChan([]*lfs.WrappedPointer{wrappedPointer}, nil, nil)
+			success = success && s
+		}
+	} else { // !all && !fetchStdin
 		filter := buildFilepathFilter(cfg, include, exclude, true)
 
 		// Fetch refs sequentially per arg order; duplicates in later refs will be ignored
@@ -456,5 +490,6 @@ func init() {
 		cmd.Flags().BoolVarP(&fetchAllArg, "all", "a", false, "Fetch all LFS files ever referenced")
 		cmd.Flags().BoolVarP(&fetchPruneArg, "prune", "p", false, "After fetching, prune old data")
 		cmd.Flags().BoolVarP(&fetchPlaceholderArg, "placeholder", "v", false, "Fetch LFS files for placeholder (virtual) files")
+		cmd.Flags().BoolVarP(&fetchStdinArg, "stdin", "s", false, "Fetch LFS files from stdin")
 	})
 }
