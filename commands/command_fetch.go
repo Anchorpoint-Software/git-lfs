@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -124,15 +125,19 @@ func fetchCommand(cmd *cobra.Command, args []string) {
 			if !scanner.Scan() {
 				break
 			}
-			pointerData := scanner.Text()
-			pointerData = strings.ReplaceAll(pointerData, "\\n", "\n")
-			pointerDataReader := strings.NewReader(pointerData)
+			pointerSha := scanner.Text()
 
-			p, err := lfs.DecodePointer(pointerDataReader)
-			if err != nil {
-				Exit(tr.Tr.Get("Could not decode pointer: %v", err))
+			if !scanner.Scan() {
+				break
+			}
+			pointerSizeStr := scanner.Text()
+
+			pointerSize, parseErr := strconv.ParseInt(pointerSizeStr, 10, 64)
+			if parseErr != nil {
+				Exit(tr.Tr.Get("Could not parse pointer size: %v", parseErr))
 			}
 
+			p := lfs.NewPointer(pointerSha, pointerSize, nil)
 			wrappedPointer := &lfs.WrappedPointer{Name: path, Pointer: p, Sha1: oid}
 			s := fetchAndReportToChan([]*lfs.WrappedPointer{wrappedPointer}, nil, nil)
 			success = success && s
