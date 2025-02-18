@@ -25,6 +25,7 @@ var (
 	fetchPruneArg       bool
 	fetchPlaceholderArg bool
 	fetchStdinArg       bool
+	fetchBatchArg       bool
 )
 
 func getIncludeExcludeArgs(cmd *cobra.Command) (include, exclude *string) {
@@ -111,11 +112,17 @@ func fetchCommand(cmd *cobra.Command, args []string) {
 
 	} else if fetchStdinArg {
 		scanner := bufio.NewScanner(os.Stdin)
+		wrappedPointers := make([]*lfs.WrappedPointer, 0)
 		for {
 			if !scanner.Scan() {
 				break
 			}
 			path := scanner.Text()
+			if path == "flush" {
+				s := fetchAndReportToChan(wrappedPointers, nil, nil)
+				success = success && s
+				wrappedPointers = make([]*lfs.WrappedPointer, 0)
+			}
 
 			if !scanner.Scan() {
 				break
@@ -139,8 +146,14 @@ func fetchCommand(cmd *cobra.Command, args []string) {
 
 			p := lfs.NewPointer(pointerSha, pointerSize, nil)
 			wrappedPointer := &lfs.WrappedPointer{Name: path, Pointer: p, Sha1: oid}
-			s := fetchAndReportToChan([]*lfs.WrappedPointer{wrappedPointer}, nil, nil)
-			success = success && s
+
+			if !fetchBatchArg {
+				s := fetchAndReportToChan([]*lfs.WrappedPointer{wrappedPointer}, nil, nil)
+				success = success && s
+			} else {
+				wrappedPointers = append(wrappedPointers, wrappedPointer)
+			}
+
 		}
 	} else { // !all && !fetchStdin
 		filter := buildFilepathFilter(cfg, include, exclude, true)
@@ -496,5 +509,6 @@ func init() {
 		cmd.Flags().BoolVarP(&fetchPruneArg, "prune", "p", false, "After fetching, prune old data")
 		cmd.Flags().BoolVarP(&fetchPlaceholderArg, "placeholder", "v", false, "Fetch LFS files for placeholder (virtual) files")
 		cmd.Flags().BoolVarP(&fetchStdinArg, "stdin", "s", false, "Fetch LFS files from stdin")
+		cmd.Flags().BoolVarP(&fetchBatchArg, "batch", "b", false, "For stdin only: invoke fetch after issuing 'flush'")
 	})
 }
