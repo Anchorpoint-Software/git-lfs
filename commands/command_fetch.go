@@ -67,6 +67,8 @@ func fetchCommand(cmd *cobra.Command, args []string) {
 		refs = []*git.Ref{ref}
 	}
 
+	cfg.IsSyncRoot = isSyncRoot(cfg.LocalWorkingDir())
+
 	var excludedRefs []string
 	var includedRefs []*git.Ref
 	for _, ref := range refs {

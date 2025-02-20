@@ -57,6 +57,8 @@ type Configuration struct {
 	mask       int
 	maskOnce   sync.Once
 	timestamp  time.Time
+
+	IsSyncRoot bool
 }
 
 func New() *Configuration {

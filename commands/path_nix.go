@@ -12,6 +12,10 @@ func osLineEnding() string {
 	return "\n"
 }
 
+func isSyncRoot(path string) bool {
+	return false
+}
+
 func isPlaceholderFile(path string) bool {
 	return false
 }

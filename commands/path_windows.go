@@ -4,6 +4,7 @@
 package commands
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -12,6 +13,7 @@ import (
 	"syscall"
 
 	"github.com/git-lfs/git-lfs/v3/subprocess"
+	"golang.org/x/sys/windows/registry"
 )
 
 var (
@@ -78,7 +80,58 @@ func fileExists(path string) bool {
 	return !os.IsNotExist(err)
 }
 
+const (
+	SYNCROOTS_PATH = "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\SyncRootManager"
+	PROVIDER_NAME  = "AnchorpointGitCloudProvider"
+)
+
+func isSyncRoot(path string) bool {
+	// Ensure the path ends with a backslash
+	if !strings.HasSuffix(path, `\`) {
+		path += `\`
+	}
+
+	// Open the registry key
+	key, err := registry.OpenKey(registry.LOCAL_MACHINE, SYNCROOTS_PATH, registry.READ)
+	if err != nil {
+		return false
+	}
+	defer key.Close()
+
+	// Enumerate subkeys
+	subkeys, err := key.ReadSubKeyNames(-1)
+	if err != nil {
+		return false
+	}
+
+	for _, subkey := range subkeys {
+		if strings.Contains(subkey, PROVIDER_NAME) {
+			fullSubKeyPath := fmt.Sprintf(`%s\%s\UserSyncRoots`, SYNCROOTS_PATH, subkey)
+			subKey, err := registry.OpenKey(registry.LOCAL_MACHINE, fullSubKeyPath, registry.READ)
+			if err == nil {
+				defer subKey.Close()
+
+				// Enumerate values
+				values, err := subKey.ReadValueNames(-1)
+				if err == nil {
+					for _, valueName := range values {
+						val, _, err := subKey.GetStringValue(valueName)
+						if err == nil && val == path {
+							return true
+						}
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
 func isPlaceholderFile(path string) bool {
+	if !cfg.IsSyncRoot {
+		return false
+	}
+
 	exists := fileExists(path)
 	if !exists {
 		// assume it's a placeholder if the file doesn't exist (the parent folder might be virtual)
