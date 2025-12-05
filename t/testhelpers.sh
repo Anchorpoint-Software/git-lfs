@@ -55,14 +55,21 @@ refute_pointer() {
   fi
 }
 
+# local_object_path computes the path to the local storage for an oid
+# $ local_object_path "some-oid"
+local_object_path() {
+  local oid="$1"
+  local cfg=`git lfs env | grep LocalMediaDir`
+  echo "${cfg#LocalMediaDir=}/${oid:0:2}/${oid:2:2}/$oid"
+}
+
 # assert_local_object confirms that an object file is stored for the given oid &
 # has the correct size
 # $ assert_local_object "some-oid" size
 assert_local_object() {
   local oid="$1"
   local size="$2"
-  local cfg=`git lfs env | grep LocalMediaDir`
-  local f="${cfg#LocalMediaDir=}/${oid:0:2}/${oid:2:2}/$oid"
+  local f="$(local_object_path "$oid")"
   actualsize=$(wc -c <"$f" | tr -d '[[:space:]]')
   if [ "$size" != "$actualsize" ]; then
     exit 1
@@ -78,8 +85,7 @@ assert_local_object() {
 refute_local_object() {
   local oid="$1"
   local size="$2"
-  local cfg=`git lfs env | grep LocalMediaDir`
-  local f="${cfg#LocalMediaDir=}/${oid:0:2}/${oid:2:2}/$oid"
+  local f="$(local_object_path "$oid")"
   if [ -e $f ]; then
     if [ -z "$size" ]; then
       exit 1
@@ -97,8 +103,7 @@ refute_local_object() {
 # $ delete_local_object "some-oid"
 delete_local_object() {
   local oid="$1"
-  local cfg=`git lfs env | grep LocalMediaDir`
-  local f="${cfg#LocalMediaDir=}/${oid:0:2}/${oid:2:2}/$oid"
+  local f="$(local_object_path "$oid")"
   rm "$f"
 }
 
@@ -106,8 +111,7 @@ delete_local_object() {
 # $ corrupt_local_object "some-oid"
 corrupt_local_object() {
   local oid="$1"
-  local cfg=`git lfs env | grep LocalMediaDir`
-  local f="${cfg#LocalMediaDir=}/${oid:0:2}/${oid:2:2}/$oid"
+  local f="$(local_object_path "$oid")"
   cp /dev/null "$f"
 }
 
@@ -184,11 +188,42 @@ assert_remote_object() {
   local destination="$(canonical_path "$REMOTEDIR/$reponame.git")"
 
   pushd "$destination"
-    local cfg="$(git lfs env | grep LocalMediaDir)"
-    local f="${cfg#LocalMediaDir=}/${oid:0:2}/${oid:2:2}/$oid"
+    local f="$(local_object_path "$oid")"
     actualsize="$(wc -c <"$f" | tr -d '[[:space:]]')"
     [ "$size" -eq "$actualsize" ]
   popd
+}
+
+# refute_remote_object() confirms that an object file with the given OID
+# is not stored in the "remote" copy of a repository
+refute_remote_object() {
+  local reponame="$1"
+  local oid="$2"
+  local destination="$(canonical_path "$REMOTEDIR/$reponame.git")"
+
+  pushd "$destination"
+    local f="$(local_object_path "$oid")"
+    if [ -e $f ]; then
+      exit 1
+    fi
+  popd
+}
+
+# Set rate limit counts on the LFS server. HTTP log is written to http.log.
+#
+#   $ reset_server_rate_limit "api" "direction" "reponame" "oid" "num-tokens"
+set_server_rate_limit() {
+  local api="$1"
+  local direction="$2"
+  local reponame="$3"
+  local oid="$4"
+  local tokens="$5"
+
+  local query="api=$api&direction=$direction&repo=$reponame&oid=$oid&tokens=$tokens"
+
+  curl -v "$GITSERVER/limits/?$query" 2>&1 | tee http.log
+
+  grep "200 OK" http.log
 }
 
 check_server_lock_ssh() {
@@ -341,11 +376,28 @@ assert_hooks() {
   [ -x "$git_root/hooks/pre-push" ]
 }
 
+assert_clean_index() {
+  [ -z "$(git diff-index --cached HEAD)" ]
+}
+
+assert_clean_worktree() {
+  [ -z "$(git diff-index HEAD)" ]
+}
+
+assert_clean_worktree_with_exceptions() {
+  local exceptions="$1"
+
+  [ -z "$(git diff-index HEAD | grep -v -E "$exceptions")" ]
+}
+
 assert_clean_status() {
+  assert_clean_worktree
+
   status="$(git status)"
-  echo "$status" | grep "working tree clean" || {
+  echo "$status" | grep "working \(directory\|tree\) clean" || {
     echo $status
     git lfs status
+    exit 1
   }
 }
 
@@ -669,6 +721,31 @@ tap_show_plan() {
   printf "1..%i\n" "$tests"
 }
 
+skip_if_root_or_admin() {
+  local test_description="$1"
+
+  if [ "$IS_WINDOWS" -eq 1 ]; then
+    # The sfc.exe (System File Checker) command should be available on all
+    # modern Windows systems, and when run without arguments, returns help
+    # text, but only when the user has Administrator privileges.  By checking
+    # the help text, if any, for the /SCANNOW (i.e., "scan now") option
+    # common to all versions of the command, we can determine if the
+    # current user has Administrator privileges.
+    #
+    # Adapted from: https://stackoverflow.com/a/58846650
+    #               https://stackoverflow.com/a/21295806
+    SFC=$(sfc | tr -d '\0' | grep "SCANNOW")
+    if [ -n "$SFC" ]; then
+      printf "skip: '%s' test requires non-administrator privileges\n" \
+        "$test_description"
+      exit 0
+    fi
+  elif [ "$EUID" -eq 0 ]; then
+    printf "skip: '%s' test requires non-root user\n" "$test_description"
+    exit 0
+  fi
+}
+
 ensure_git_version_isnt() {
   local expectedComparison=$1
   local version=$2
@@ -847,6 +924,45 @@ has_test_dir() {
   fi
 }
 
+has_native_symlinks() {
+  if [ -z "$NATIVE_SYMLINKS" ]; then
+    if [ "$IS_WINDOWS" -eq 1 ]; then
+      # On Windows, we need to enable native symlink support in Cygwin or MSYS2,
+      # without falling back to default Cygwin symlink emulation.  If this mode
+      # is not available, we should skip our tests with symbolic links.
+      #
+      # https://cygwin.com/cygwin-ug-net/using.html#pathnames-symlinks
+      # https://www.msys2.org/docs/symlinks/
+      # https://learn.microsoft.com/en-us/windows/apps/get-started/enable-your-device-for-development
+      export CYGWIN="winsymlinks:nativestrict${CYGWIN:+ $CYGWIN}"
+      export MSYS="winsymlinks:nativestrict${MSYS:+ $MSYS}"
+
+      touch testfile.tmp
+      ln -s testfile.tmp testlink.tmp
+
+      if [ $(fsutil reparsepoint query testlink.tmp | grep -c "Tag value: Symbolic Link") -eq 0 ]; then
+        NATIVE_SYMLINKS=0
+      else
+        NATIVE_SYMLINKS=1
+      fi
+
+      rm -f testfile.tmp testlink.tmp
+    else
+      NATIVE_SYMLINKS=1
+    fi
+  fi
+
+  if [ "$NATIVE_SYMLINKS" -ne 1 ]; then
+    return 1
+  else
+    return 0
+  fi
+}
+
+skip_if_symlinks_unsupported() {
+  has_native_symlinks || exit 0
+}
+
 add_symlink() {
   local src=$1
   local dest=$2
@@ -856,6 +972,27 @@ add_symlink() {
 
   git update-index --add --cacheinfo 120000 "$hashsrc" "$prefix$dest"
   git checkout -- "$dest"
+}
+
+setup_case_inverter_extension() {
+  export LFSTEST_EXT_LOG="$TRASHDIR/caseinverterextension.log"
+
+  git config lfs.extension.caseinverter.clean \
+    "lfstest-caseinverterextension clean -- %f"
+  git config lfs.extension.caseinverter.smudge \
+    "lfstest-caseinverterextension smudge -- %f"
+  git config lfs.extension.caseinverter.priority 0
+}
+
+case_inverter_extension_pointer() {
+  local ext_oid_line="ext-0-caseinverter sha256:$1"
+  local base_pointer="$(pointer "$2" "$3")"
+
+  printf "%s" "$base_pointer" | sed "s/^oid /$ext_oid_line\noid /"
+}
+
+invert_case() {
+  printf "%s" "$1" | tr "[:lower:][:upper:]" "[:upper:][:lower:]"
 }
 
 urlify() {

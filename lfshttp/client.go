@@ -21,7 +21,6 @@ import (
 	"github.com/git-lfs/git-lfs/v3/config"
 	"github.com/git-lfs/git-lfs/v3/creds"
 	"github.com/git-lfs/git-lfs/v3/errors"
-	"github.com/git-lfs/git-lfs/v3/tools"
 	"github.com/git-lfs/git-lfs/v3/tr"
 	"github.com/rubyist/tracerx"
 	"golang.org/x/net/http2"
@@ -215,7 +214,7 @@ func (c *Client) sshResolveWithRetries(e Endpoint, method string) (*sshAuthRespo
 		return nil, errors.New("git-lfs-authenticate has been disabled by request")
 	}
 
-	requests := tools.MaxInt(0, c.sshTries) + 1
+	requests := max(0, c.sshTries) + 1
 	for i := 0; i < requests; i++ {
 		sshRes, err = c.SSH.Resolve(e, method)
 		if err == nil {
@@ -293,7 +292,7 @@ func (c *Client) DoWithRedirect(cli *http.Client, req *http.Request, remote stri
 
 	var res *http.Response
 
-	requests := tools.MaxInt(0, retries) + 1
+	requests := max(0, retries) + 1
 	for i := 0; i < requests; i++ {
 		res, err = cli.Do(req)
 		if err == nil {
@@ -483,7 +482,7 @@ func (c *Client) Transport(u *url.URL, access creds.AccessMode) (http.RoundTripp
 	if isCertVerificationDisabledForHost(c, host) {
 		tr.TLSClientConfig.InsecureSkipVerify = true
 	} else {
-		tr.TLSClientConfig.RootCAs = getRootCAsForHost(c, host)
+		tr.TLSClientConfig.RootCAs = getRootCAsForHostFromGitconfig(c, host)
 	}
 
 	if err := c.configureProtocols(u, tr); err != nil {

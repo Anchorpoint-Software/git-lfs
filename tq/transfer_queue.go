@@ -129,7 +129,7 @@ func (b batch) Concat(other batch, size int) (left, right batch, minWait time.Du
 func (b batch) ToTransfers() []*Transfer {
 	transfers := make([]*Transfer, 0, len(b))
 	for _, t := range b {
-		transfers = append(transfers, &Transfer{Oid: t.Oid, Size: t.Size, Missing: t.Missing})
+		transfers = append(transfers, &Transfer{Oid: t.Oid, Size: t.Size})
 	}
 	return transfers
 }
@@ -251,6 +251,7 @@ type objectTuple struct {
 	Size            int64
 	Missing         bool
 	ReadyTime       time.Time
+	retryLaterTime  time.Time
 }
 
 func (o *objectTuple) ToTransfer() *Transfer {
@@ -546,7 +547,10 @@ func (q *TransferQueue) enqueueAndCollectRetriesFor(batch batch) (batch, error) 
 	enqueueRetry := func(t *objectTuple, err error, readyTime *time.Time) {
 		count := q.rc.Increment(t.Oid)
 
-		if readyTime == nil {
+		if !t.retryLaterTime.IsZero() {
+			t.ReadyTime = t.retryLaterTime
+			t.retryLaterTime = time.Time{}
+		} else if readyTime == nil {
 			t.ReadyTime = q.rc.ReadyTime(t.Oid)
 		} else {
 			t.ReadyTime = *readyTime
@@ -568,7 +572,7 @@ func (q *TransferQueue) enqueueAndCollectRetriesFor(batch batch) (batch, error) 
 		// Trust the external transfer agent can do everything by itself.
 		objects := make([]*Transfer, 0, len(batch))
 		for _, t := range batch {
-			objects = append(objects, &Transfer{Oid: t.Oid, Size: t.Size, Path: t.Path, Missing: t.Missing})
+			objects = append(objects, &Transfer{Oid: t.Oid, Size: t.Size, Path: t.Path})
 		}
 		bRes = &BatchResponse{
 			Objects:             objects,
@@ -620,8 +624,18 @@ func (q *TransferQueue) enqueueAndCollectRetriesFor(batch batch) (batch, error) 
 			// actions will be empty. It's fine if the file is
 			// missing in that case, since we don't need to upload
 			// it.
-			if o.Missing && len(o.Actions) != 0 {
-				return nil, errors.New(tr.Tr.Get("Unable to find source for object %v (try running `git lfs fetch --all`)", o.Oid))
+			if len(o.Actions) != 0 {
+				q.trMutex.Lock()
+				objects, ok := q.transfers[o.Oid]
+				q.trMutex.Unlock()
+				// We expect only one objectTuple in this list
+				// as the uploadContext methods deduplicate
+				// identical OIDs before adding them to the
+				// transfer queue.
+				if ok && objects.First().Missing {
+					tracerx.Printf("tq: stopping batched queue, object %q missing locally and on remote", o.Oid)
+					return nil, newObjectMissingError(objects.First().Name, o.Oid)
+				}
 			}
 		}
 	}
@@ -648,7 +662,7 @@ func (q *TransferQueue) enqueueAndCollectRetriesFor(batch batch) (batch, error) 
 			// Transfer object, then we give up on the
 			// transfer by telling the progress meter to
 			// skip the number of bytes in "o".
-			q.errorc <- errors.Errorf(tr.Tr.Get("[%v] The server returned an unknown OID.", o.Oid))
+			q.errorc <- errors.New(tr.Tr.Get("[%v] The server returned an unknown OID.", o.Oid))
 
 			q.Skip(o.Size)
 			q.wait.Done()
@@ -748,7 +762,7 @@ func (q *TransferQueue) partitionTransfers(transfers []*Transfer) (present []*Tr
 		var err error
 
 		if t.Size < 0 {
-			err = errors.Errorf(tr.Tr.Get("object %q has invalid size (got: %d)", t.Oid, t.Size))
+			err = errors.New(tr.Tr.Get("object %q has invalid size (got: %d)", t.Oid, t.Size))
 		} else {
 			fd, serr := os.Stat(t.Path)
 			if serr != nil {
@@ -802,14 +816,14 @@ func (q *TransferQueue) handleTransferResult(
 			// If the object can't be retried now, but can be
 			// after a certain period of time, send it to
 			// the retry channel with a time when it's ready.
-			tracerx.Printf("tq: retrying object %s after %s seconds.", oid, time.Until(readyTime).Seconds())
+			tracerx.Printf("tq: retrying object %s after %.2fs", oid, time.Until(readyTime).Seconds())
 			q.trMutex.Lock()
 			objects, ok := q.transfers[oid]
 			q.trMutex.Unlock()
 
 			if ok {
 				t := objects.First()
-				t.ReadyTime = readyTime
+				t.retryLaterTime = readyTime
 				retries <- t
 			} else {
 				q.errorc <- res.Error
@@ -854,10 +868,12 @@ func (q *TransferQueue) handleTransferResult(
 			// same OID.
 			for _, t := range objects.All() {
 				c <- &Transfer{
-					Name: t.Name,
-					Path: t.Path,
-					Oid:  t.Oid,
-					Size: t.Size,
+					Name:    t.Name,
+					Path:    t.Path,
+					Oid:     t.Oid,
+					Size:    t.Size,
+					Actions: res.Transfer.Actions,
+					Links:   res.Transfer.Links,
 				}
 			}
 		}

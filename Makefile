@@ -39,8 +39,12 @@ BUILTIN_LD_FLAGS += -w
 endif
 # EXTRA_LD_FLAGS are given by the caller, and are passed to the Go linker after
 # BUILTIN_LD_FLAGS are processed. By default the system LDFLAGS are passed.
+# Note that these must be passed as a single argument to -extldflags, and
+# since our LD_FLAGS variable must in turn be passed as a single argument
+# to the "go build" command's -ldflags option, we enclose any system LDFLAGS
+# in escaped quotes.
 ifdef LDFLAGS
-EXTRA_LD_FLAGS ?= -extldflags ${LDFLAGS}
+EXTRA_LD_FLAGS ?= -extldflags \"$(LDFLAGS)\"
 endif
 # LD_FLAGS is the union of the above two BUILTIN_LD_FLAGS and EXTRA_LD_FLAGS.
 LD_FLAGS = $(BUILTIN_LD_FLAGS) $(EXTRA_LD_FLAGS)
@@ -99,12 +103,9 @@ else
 CERT_ARGS ?= -sha1 $(CERT_SHA1)
 endif
 
-# DARWIN_CERT_ID is a portion of the common name of the signing certificatee.
-DARWIN_CERT_ID ?=
-
 # DARWIN_KEYCHAIN_ID is the name of the keychain (with suffix) where the
 # certificate is located.
-DARWIN_KEYCHAIN_ID ?= CI.keychain
+DARWIN_KEYCHAIN_ID ?= lfs.keychain
 
 export DARWIN_DEV_USER DARWIN_DEV_PASS DARWIN_DEV_TEAM
 
@@ -517,20 +518,20 @@ release-windows-rebuild: bin/releases/git-lfs-windows-assets-$(VERSION).tar.gz
 
 # release-darwin is a target that builds and signs Darwin (macOS) binaries.  It must
 # be run on a macOS machine with a suitable version of XCode.
-#
-# You may sign with a different certificate by specifying DARWIN_CERT_ID.
 .PHONY : release-darwin
 release-darwin: bin/releases/git-lfs-darwin-amd64-$(VERSION).zip bin/releases/git-lfs-darwin-arm64-$(VERSION).zip
+	@cert_id=$$(security find-identity -vp codesigning $(DARWIN_KEYCHAIN_ID) | grep '^ *1)' | awk '{print $$2}') && \
 	for i in $^; do \
 		temp=$$(mktemp -d) && \
 		root=$$(pwd -P) && \
 		( \
 			$(BSDTAR) -C "$$temp" -xf "$$i" && \
-			$(CODESIGN) --keychain $(DARWIN_KEYCHAIN_ID) -s "$(DARWIN_CERT_ID)" --force --timestamp -vvvv --options runtime "$$temp/$(PREFIX)/git-lfs" && \
-			$(CODESIGN) -dvvv "$$temp/$(PREFIX)/git-lfs" && \
+			echo "Signing git-lfs binary for $$i ..." && \
+			$(CODESIGN) --keychain $(DARWIN_KEYCHAIN_ID) -s "$$cert_id" --force --timestamp -v --options runtime "$$temp/$(PREFIX)/git-lfs" && \
 			(cd "$$temp" && $(BSDTAR) --format zip -cf "$$root/$$i" "$(PREFIX)") && \
-			$(CODESIGN) --keychain $(DARWIN_KEYCHAIN_ID) -s "$(DARWIN_CERT_ID)" --force --timestamp -vvvv --options runtime "$$i" && \
-			$(CODESIGN) -dvvv "$$i" && \
+			echo "Signing $$i ..." && \
+			$(CODESIGN) --keychain $(DARWIN_KEYCHAIN_ID) -s "$$cert_id" --force --timestamp -v --options runtime "$$i" && \
+			echo "Notarizing $$i ..." && \
 			jq -e ".notarize.path = \"$$i\" | .apple_id.username = \"$(DARWIN_DEV_USER)\"" script/macos/manifest.json > "$$temp/manifest.json"; \
 			for j in 1 2 3; \
 			do \
@@ -547,22 +548,20 @@ release-write-certificate:
 	@printf 'Wrote %d bytes (SHA256 %s) to certificate file\n' $$(wc -c <"$$CERT_FILE") $$(shasum -ba 256 "$$CERT_FILE" | cut -d' ' -f1)
 
 # release-import-certificate imports the given certificate into the macOS
-# keychain "CI".  It is not generally recommended to run this on a user system,
+# keychain "lfs".  It is not generally recommended to run this on a user system,
 # since it creates a new keychain and modifies the keychain search path.
 .PHONY : release-import-certificate
 release-import-certificate:
 	@[ -n "$(CI)" ] || { echo "Don't run this target by hand." >&2; false; }
-	@echo "Creating CI keychain"
-	security create-keychain -p default CI.keychain
-	security set-keychain-settings CI.keychain
-	security unlock-keychain -p default CI.keychain
+	@echo "Creating keychain"
+	security create-keychain -p default $(DARWIN_KEYCHAIN_ID)
+	security set-keychain-settings $(DARWIN_KEYCHAIN_ID)
+	security unlock-keychain -p default $(DARWIN_KEYCHAIN_ID)
 	@echo "Importing certificate from $(CERT_FILE)"
-	@security import "$$CERT_FILE" -f pkcs12 -k CI.keychain -P "$$CERT_PASS" -A
+	@security import "$$CERT_FILE" -f pkcs12 -k $(DARWIN_KEYCHAIN_ID) -P "$$CERT_PASS" -A
 	@echo "Verifying import and setting permissions"
-	security list-keychains -s CI.keychain
-	security default-keychain -s CI.keychain
-	security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k default CI.keychain
-	security find-identity -vp codesigning CI.keychain
+	security default-keychain -s $(DARWIN_KEYCHAIN_ID)
+	security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k default $(DARWIN_KEYCHAIN_ID) >/dev/null
 
 # TEST_TARGETS is a list of all phony test targets. Each one of them corresponds
 # to a specific kind or subset of tests to run.
@@ -722,16 +721,28 @@ MAN_HTML_TARGETS = man/html/git-lfs-checkout.1.html \
   man/html/git-lfs-update.1.html \
   man/html/git-lfs.1.html
 
-# man generates all ROFF- and HTML-style manpage targets.
+# man generates all ROFF- and HTML-style man page targets.
 .PHONY : man
 man : $(MAN_ROFF_TARGETS) $(MAN_HTML_TARGETS)
 
-# man/% generates ROFF-style man pages from the corresponding .ronn file.
-man/man1/%.1 man/man5/%.5 man/man7/%.7 : docs/man/%.adoc
-	@mkdir -p man/man1 man/man5
-	$(ASCIIDOCTOR) $(ASCIIDOCTOR_EXTRA_ARGS) -b manpage -o $@ $^
+# Generate ROFF-style man pages from the corresponding .adoc files.
+man/man1/%.1 : docs/man/%.adoc
+	@mkdir -p man/man1
+	$(ASCIIDOCTOR) $(ASCIIDOCTOR_EXTRA_ARGS) -b manpage -o $@ $<
+man/man5/%.5 : docs/man/%.adoc
+	@mkdir -p man/man5
+	$(ASCIIDOCTOR) $(ASCIIDOCTOR_EXTRA_ARGS) -b manpage -o $@ $<
+man/man7/%.7 : docs/man/%.adoc
+	@mkdir -p man/man7
+	$(ASCIIDOCTOR) $(ASCIIDOCTOR_EXTRA_ARGS) -b manpage -o $@ $<
 
-# man/%.html generates HTML-style man pages from the corresponding .ronn file.
-man/html/%.1.html man/html/%.5.html man/html/%.7.html : docs/man/%.adoc
+# Generate HTML-style man pages from the corresponding .adoc files.
+man/html/%.1.html : docs/man/%.adoc
 	@mkdir -p man/html
-	$(ASCIIDOCTOR) $(ASCIIDOCTOR_EXTRA_ARGS) -b html5 -o $@ $^
+	$(ASCIIDOCTOR) $(ASCIIDOCTOR_EXTRA_ARGS) -b html5 -o $@ $<
+man/html/%.5.html : docs/man/%.adoc
+	@mkdir -p man/html
+	$(ASCIIDOCTOR) $(ASCIIDOCTOR_EXTRA_ARGS) -b html5 -o $@ $<
+man/html/%.7.html : docs/man/%.adoc
+	@mkdir -p man/html
+	$(ASCIIDOCTOR) $(ASCIIDOCTOR_EXTRA_ARGS) -b html5 -o $@ $<

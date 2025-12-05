@@ -121,6 +121,15 @@ type repositoryPermissionFetcher interface {
 	RepositoryPermissions(executable bool) os.FileMode
 }
 
+// Mkdir makes a directory with the
+// permissions specified by the core.sharedRepository setting.
+func Mkdir(path string, config repositoryPermissionFetcher) error {
+	umask := 0777 & ^config.RepositoryPermissions(true)
+	return doWithUmask(int(umask), func() error {
+		return os.Mkdir(path, config.RepositoryPermissions(true))
+	})
+}
+
 // MkdirAll makes a directory and any intervening directories with the
 // permissions specified by the core.sharedRepository setting.
 func MkdirAll(path string, config repositoryPermissionFetcher) error {
@@ -181,14 +190,14 @@ func ExpandPath(path string, expand bool) (string, error) {
 	}
 
 	if err != nil {
-		return "", errors.Wrapf(err, tr.Tr.Get("could not find user %s", username))
+		return "", errors.Wrap(err, tr.Tr.Get("could not find user %s", username))
 	}
 
 	homedir := who.HomeDir
 	if expand {
 		homedir, err = filepath.EvalSymlinks(homedir)
 		if err != nil {
-			return "", errors.Wrapf(err, tr.Tr.Get("cannot eval symlinks for %s", homedir))
+			return "", errors.Wrap(err, tr.Tr.Get("cannot eval symlinks for %s", homedir))
 		}
 	}
 	return filepath.Join(homedir, path[len(username)+1:]), nil

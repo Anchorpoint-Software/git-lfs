@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -28,8 +28,11 @@ import (
 // Populate man pages
 //go:generate go run ../docs/man/mangen.go
 
+const (
+	defaultFilepathFilterCacheSize = 10000
+)
+
 var (
-	Debugging    = false
 	ErrorBuffer  = &bytes.Buffer{}
 	ErrorWriter  = newMultiWriter(os.Stderr, ErrorBuffer)
 	OutputWriter = newMultiWriter(os.Stdout, ErrorBuffer)
@@ -136,7 +139,7 @@ func buildFilepathFilter(config *config.Configuration, includeArg, excludeArg *s
 
 func buildFilepathFilterWithPatternType(config *config.Configuration, includeArg, excludeArg *string, useFetchOptions bool, patternType filepathfilter.PatternType) *filepathfilter.Filter {
 	inc, exc := determineIncludeExcludePaths(config, includeArg, excludeArg, useFetchOptions)
-	return filepathfilter.New(inc, exc, patternType)
+	return filepathfilter.New(inc, exc, patternType, determineFilepathFilterCache(config))
 }
 
 func downloadTransfer(p *lfs.WrappedPointer) (name, path, oid string, size int64, missing bool, err error) {
@@ -237,21 +240,12 @@ func FullError(err error) {
 }
 
 func errorWith(err error, fatalErrFn func(error, string, ...interface{}), errFn func(string, ...interface{})) {
-	if Debugging || errors.IsFatalError(err) {
+	if errors.IsFatalError(err) {
 		fatalErrFn(err, "%s", err)
 		return
 	}
 
 	errFn("%s", err)
-}
-
-// Debug prints a formatted message if debugging is enabled.  The formatted
-// message also shows up in the panic log, if created.
-func Debug(format string, args ...interface{}) {
-	if !Debugging {
-		return
-	}
-	log.Printf(format, args...)
 }
 
 // LoggedError prints the given message formatted with its arguments (if any) to
@@ -534,6 +528,29 @@ func determineIncludeExcludePaths(config *config.Configuration, includeArg, excl
 	return
 }
 
+func determineFilepathFilterCache(config *config.Configuration) filepathfilter.Option {
+	cacheSize := defaultFilepathFilterCacheSize
+
+	if configSize, ok := config.Git.Get("lfs.pathfiltercachesize"); ok {
+		switch configSize {
+		case "none":
+			return filepathfilter.DisableCache()
+		case "unlimited":
+			cacheSize = 0
+		default:
+			if s, err := strconv.Atoi(configSize); err == nil {
+				if s == 0 {
+					return filepathfilter.DisableCache()
+				} else if s > 0 {
+					cacheSize = s
+				}
+			}
+		}
+	}
+
+	return filepathfilter.EnableCache(cacheSize)
+}
+
 func buildProgressMeter(dryRun bool, d tq.Direction) *tq.Meter {
 	m := tq.NewMeter(cfg)
 	m.Logger = m.LoggerFromEnv(cfg.Os)
@@ -543,7 +560,7 @@ func buildProgressMeter(dryRun bool, d tq.Direction) *tq.Meter {
 }
 
 func requireGitVersion() {
-	minimumGit := "1.8.2"
+	minimumGit := "2.0.0"
 
 	if !git.IsGitVersionAtLeast(minimumGit) {
 		gitver, err := git.Version()
