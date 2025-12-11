@@ -101,7 +101,7 @@ func migrateInfoCommand(cmd *cobra.Command, args []string) {
 	}
 
 	if migrateFixup {
-		include, exclude := getIncludeExcludeArgs(cmd)
+		include, exclude, _, _ := getIncludeExcludeArgs(cmd)
 		if include != nil || exclude != nil {
 			ExitWithError(errors.New(tr.Tr.Get("Cannot use --fixup with --include, --exclude")))
 		}

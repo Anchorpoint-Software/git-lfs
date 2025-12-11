@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
 	"io"
@@ -45,8 +46,9 @@ var (
 
 	oldEnv = make(map[string]string)
 
-	includeArg string
-	excludeArg string
+	includeArg      string
+	excludeArg      string
+	includeStdinArg string
 )
 
 // getTransferManifest builds a tq.Manifest from the global os and git
@@ -133,12 +135,12 @@ func currentRemoteRef() *git.Ref {
 	return git.NewRefUpdate(cfg.Git, cfg.PushRemote(), cfg.CurrentRef(), nil).RemoteRef()
 }
 
-func buildFilepathFilter(config *config.Configuration, includeArg, excludeArg *string, useFetchOptions bool) *filepathfilter.Filter {
-	return buildFilepathFilterWithPatternType(config, includeArg, excludeArg, useFetchOptions, filepathfilter.GitIgnore)
+func buildFilepathFilter(config *config.Configuration, includeArg, excludeArg *string, includeStdin, excludeStdin bool, useFetchOptions bool) *filepathfilter.Filter {
+	return buildFilepathFilterWithPatternType(config, includeArg, excludeArg, includeStdin, excludeStdin, useFetchOptions, filepathfilter.GitIgnore)
 }
 
-func buildFilepathFilterWithPatternType(config *config.Configuration, includeArg, excludeArg *string, useFetchOptions bool, patternType filepathfilter.PatternType) *filepathfilter.Filter {
-	inc, exc := determineIncludeExcludePaths(config, includeArg, excludeArg, useFetchOptions)
+func buildFilepathFilterWithPatternType(config *config.Configuration, includeArg, excludeArg *string, includeStdin, excludeStdin bool, useFetchOptions bool, patternType filepathfilter.PatternType) *filepathfilter.Filter {
+	inc, exc := determineIncludeExcludePaths(config, includeArg, excludeArg, includeStdin, excludeStdin, useFetchOptions)
 	return filepathfilter.New(inc, exc, patternType, determineFilepathFilterCache(config))
 }
 
@@ -506,8 +508,24 @@ func logPanicToWriter(w io.Writer, loggedError error, le string) {
 	}
 }
 
-func determineIncludeExcludePaths(config *config.Configuration, includeArg, excludeArg *string, useFetchOptions bool) (include, exclude []string) {
-	if includeArg == nil {
+func determineIncludeExcludePaths(config *config.Configuration, includeArg, excludeArg *string, includeStdin, excludeStdin bool, useFetchOptions bool) (include, exclude []string) {
+	if includeStdin {
+		// Read include paths from stdin until "flush" is encountered
+		scanner := bufio.NewScanner(os.Stdin)
+		include = []string{}
+		for scanner.Scan() {
+			path := strings.TrimSpace(scanner.Text())
+			if path == "flush" {
+				break
+			}
+			if path != "" {
+				include = append(include, path)
+			}
+		}
+		if err := scanner.Err(); err != nil {
+			ExitWithError(err)
+		}
+	} else if includeArg == nil {
 		if useFetchOptions {
 			include = config.FetchIncludePaths()
 		} else {
@@ -516,7 +534,23 @@ func determineIncludeExcludePaths(config *config.Configuration, includeArg, excl
 	} else {
 		include = tools.CleanPaths(*includeArg, ",")
 	}
-	if excludeArg == nil {
+	if excludeStdin {
+		// Read exclude paths from stdin until "flush" is encountered
+		scanner := bufio.NewScanner(os.Stdin)
+		exclude = []string{}
+		for scanner.Scan() {
+			path := strings.TrimSpace(scanner.Text())
+			if path == "flush" {
+				break
+			}
+			if path != "" {
+				exclude = append(exclude, path)
+			}
+		}
+		if err := scanner.Err(); err != nil {
+			ExitWithError(err)
+		}
+	} else if excludeArg == nil {
 		if useFetchOptions {
 			exclude = config.FetchExcludePaths()
 		} else {

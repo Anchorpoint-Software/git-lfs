@@ -122,7 +122,7 @@ func migrateImportCommand(cmd *cobra.Command, args []string) {
 	}
 
 	if migrateFixup {
-		include, exclude := getIncludeExcludeArgs(cmd)
+		include, exclude, _, _ := getIncludeExcludeArgs(cmd)
 		if include != nil || exclude != nil {
 			ExitWithError(errors.New(tr.Tr.Get("Cannot use --fixup with --include, --exclude")))
 		}
@@ -140,7 +140,7 @@ func migrateImportCommand(cmd *cobra.Command, args []string) {
 		ExitWithError(errors.Wrap(err, tr.Tr.Get("Cannot parse --above=<n>")))
 	}
 	if above > 0 {
-		include, exclude := getIncludeExcludeArgs(cmd)
+		include, exclude, _, _ := getIncludeExcludeArgs(cmd)
 		if include != nil || exclude != nil || migrateFixup {
 			ExitWithError(errors.New(tr.Tr.Get("Cannot use --above with --include, --exclude, --fixup")))
 		}

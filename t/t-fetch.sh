@@ -467,6 +467,10 @@ begin_test "fetch does not crash on empty key files"
 
   git lfs fetch origin main 2>&1 | tee fetch.log
   grep "Error decoding PEM block" fetch.log
+  
+  # Clean up the config so it doesn't affect subsequent tests
+  git config --local --unset http.sslKey
+  git config --local --unset http.sslCert
 )
 end_test
 
@@ -838,3 +842,93 @@ begin_test "fetch fails when LFS directory has wrong permissions"
   grep "error trying to create local storage directory" fetch.log
 )
 end_test
+
+begin_test "fetch with --stdin -I"
+(
+  set -e
+  cd clone
+  rm -rf .git/lfs/objects
+
+  # Fetch only a.dat using include from stdin
+  echo -e "a.dat\nflush" | git lfs fetch -I "" --stdin --dry-run 2>&1 | tee fetch.log
+  grep "fetch $contents_oid => a\.dat" fetch.log
+
+  # Verify empty.dat is not fetched (it's not in the include list)
+  echo -e "a.dat\nflush" | git lfs fetch -I "" --stdin
+  assert_local_object "$contents_oid" 1
+)
+end_test
+
+begin_test "fetch with --stdin -X"
+(
+  set -e
+  cd repo
+  
+  # Create another file to test exclusion
+  printf "test" > test.dat
+  git add test.dat
+  git commit -m "add test.dat"
+  test_oid=$(calc_oid "test")
+  git push origin main
+  
+  cd ../clone
+  git pull
+  rm -rf .git/lfs/objects
+
+  # Fetch all except test.dat using exclude from stdin
+  echo -e "test.dat\nflush" | git lfs fetch -X "" --stdin --dry-run 2>&1 | tee fetch.log
+  grep "fetch $contents_oid => a\.dat" fetch.log
+  grep "fetch .* => test\.dat" fetch.log && exit 1 || true
+
+  echo -e "test.dat\nflush" | git lfs fetch -X "" --stdin
+  assert_local_object "$contents_oid" 1
+  refute_local_object "$test_oid"
+)
+end_test
+
+begin_test "fetch with --stdin -I -X"
+(
+  set -e
+  
+  # test.dat should already exist from previous test
+  test_oid=$(calc_oid "test")
+  
+  # Now test in clone
+  cd clone
+  rm -rf .git/lfs/objects
+
+  # Fetch with both include and exclude from stdin
+  # Include *.dat, but exclude test.dat
+  cat <<EOF | git lfs fetch -I "" -X "" --stdin --dry-run 2>&1 | tee fetch.log
+*.dat
+flush
+test.dat
+flush
+EOF
+  
+  grep "fetch $contents_oid => a\.dat" fetch.log
+  grep "fetch .* => test\.dat" fetch.log && exit 1 || true
+
+  cat <<EOF | git lfs fetch -I "" -X "" --stdin
+*.dat
+flush
+test.dat
+flush
+EOF
+  
+  assert_local_object "$contents_oid" 1
+  refute_local_object "$test_oid"
+)
+end_test
+
+begin_test "fetch --stdin requires -I or -X"
+(
+  set -e
+  cd clone
+
+  # --stdin without -I or -X should fail
+  git lfs fetch --stdin 2>&1 | tee fetch.log
+  grep "\-\-stdin flag requires \-\-include" fetch.log
+)
+end_test
+

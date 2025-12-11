@@ -27,8 +27,8 @@ func pullCommand(cmd *cobra.Command, args []string) {
 		}
 	}
 
-	includeArg, excludeArg := getIncludeExcludeArgs(cmd)
-	filter := buildFilepathFilter(cfg, includeArg, excludeArg, true)
+	includeArg, excludeArg, _, _ := getIncludeExcludeArgs(cmd)
+	filter := buildFilepathFilter(cfg, includeArg, excludeArg, false, false, true)
 	pull(filter)
 }
 

@@ -79,8 +79,8 @@ func cloneCommand(cmd *cobra.Command, args []string) {
 	}
 
 	if ref, err := git.CurrentRef(); err == nil {
-		includeArg, excludeArg := getIncludeExcludeArgs(cmd)
-		filter := buildFilepathFilter(cfg, includeArg, excludeArg, true)
+		includeArg, excludeArg, _, _ := getIncludeExcludeArgs(cmd)
+		filter := buildFilepathFilter(cfg, includeArg, excludeArg, false, false, true)
 		if cloneFlags.NoCheckout || cloneFlags.Bare {
 			// If --no-checkout or --bare then we shouldn't check out, just fetch instead
 			fetchRef(ref.Name, filter, nil, nil, true)

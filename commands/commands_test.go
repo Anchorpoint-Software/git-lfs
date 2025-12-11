@@ -19,7 +19,7 @@ var (
 func TestDetermineIncludeExcludePathsReturnsCleanedPaths(t *testing.T) {
 	inc := "/some/include"
 	exc := "/some/exclude"
-	i, e := determineIncludeExcludePaths(testcfg, &inc, &exc, true)
+	i, e := determineIncludeExcludePaths(testcfg, &inc, &exc, false, false, true)
 
 	assert.Equal(t, []string{"/some/include"}, i)
 	assert.Equal(t, []string{"/some/exclude"}, e)
@@ -28,21 +28,21 @@ func TestDetermineIncludeExcludePathsReturnsCleanedPaths(t *testing.T) {
 func TestDetermineIncludeExcludePathsReturnsEmptyPaths(t *testing.T) {
 	inc := ""
 	exc := ""
-	i, e := determineIncludeExcludePaths(testcfg, &inc, &exc, true)
+	i, e := determineIncludeExcludePaths(testcfg, &inc, &exc, false, false, true)
 
 	assert.Empty(t, i)
 	assert.Empty(t, e)
 }
 
 func TestDetermineIncludeExcludePathsReturnsDefaultsWhenAbsent(t *testing.T) {
-	i, e := determineIncludeExcludePaths(testcfg, nil, nil, true)
+	i, e := determineIncludeExcludePaths(testcfg, nil, nil, false, false, true)
 
 	assert.Equal(t, []string{"/default/include"}, i)
 	assert.Equal(t, []string{"/default/exclude"}, e)
 }
 
 func TestDetermineIncludeExcludePathsReturnsNothingWhenAbsent(t *testing.T) {
-	i, e := determineIncludeExcludePaths(testcfg, nil, nil, false)
+	i, e := determineIncludeExcludePaths(testcfg, nil, nil, false, false, false)
 
 	assert.Empty(t, i)
 	assert.Empty(t, e)

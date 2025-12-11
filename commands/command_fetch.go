@@ -22,15 +22,16 @@ import (
 )
 
 var (
-	fetchRecentArg      bool
-	fetchAllArg         bool
-	fetchPruneArg       bool
-	fetchRefetchArg     bool
-	fetchDryRunArg      bool
-	fetchJsonArg        bool
-	fetchPlaceholderArg bool
-	fetchStdinArg       bool
-	fetchBatchArg       bool
+	fetchRecentArg              bool
+	fetchAllArg                 bool
+	fetchPruneArg               bool
+	fetchRefetchArg             bool
+	fetchDryRunArg              bool
+	fetchJsonArg                bool
+	fetchPlaceholderArg         bool
+	fetchStdinArg               bool
+	fetchBatchArg               bool
+	fetchIncludeExcludeStdinArg bool
 )
 
 type fetchWatcher struct {
@@ -81,14 +82,26 @@ func printProgress(format string, args ...interface{}) {
 	Error(format, args...)
 }
 
-func getIncludeExcludeArgs(cmd *cobra.Command) (include, exclude *string) {
+func getIncludeExcludeArgs(cmd *cobra.Command) (include, exclude *string, includeStdin, excludeStdin bool) {
 	includeFlag := cmd.Flag("include")
 	excludeFlag := cmd.Flag("exclude")
+
+	// When --stdin is used with -I or -X, read from stdin instead of using the value
 	if includeFlag.Changed {
-		include = &includeArg
+		if fetchIncludeExcludeStdinArg {
+			includeStdin = true
+			// Don't use the includeArg value when reading from stdin
+		} else {
+			include = &includeArg
+		}
 	}
 	if excludeFlag.Changed {
-		exclude = &excludeArg
+		if fetchIncludeExcludeStdinArg {
+			excludeStdin = true
+			// Don't use the excludeArg value when reading from stdin
+		} else {
+			exclude = &excludeArg
+		}
 	}
 
 	return
@@ -139,7 +152,7 @@ func fetchCommand(cmd *cobra.Command, args []string) {
 	}
 
 	success := true
-	include, exclude := getIncludeExcludeArgs(cmd)
+	include, exclude, includeStdin, excludeStdin := getIncludeExcludeArgs(cmd)
 	fetchPruneCfg := lfs.NewFetchPruneConfig(cfg.Git)
 
 	watcher := &fetchWatcher{}
@@ -152,7 +165,7 @@ func fetchCommand(cmd *cobra.Command, args []string) {
 			// Default to fetching placeholders when fetching all
 			fetchPlaceholderArg = true
 		}
-		if include != nil || exclude != nil {
+		if include != nil || exclude != nil || includeStdin || excludeStdin {
 			Exit(tr.Tr.Get("Cannot combine --all with --include or --exclude"))
 		}
 		if len(cfg.FetchIncludePaths()) > 0 || len(cfg.FetchExcludePaths()) > 0 {
@@ -218,9 +231,14 @@ func fetchCommand(cmd *cobra.Command, args []string) {
 
 		}
 	} else { // !all && !fetchStdin
-		filter := buildFilepathFilter(cfg, include, exclude, true)
+		if fetchIncludeExcludeStdinArg && !cmd.Flag("include").Changed && !cmd.Flag("exclude").Changed {
+			Exit(tr.Tr.Get("--stdin flag requires --include (-I) or --exclude (-X) to be specified"))
+		}
+
+		filter := buildFilepathFilter(cfg, include, exclude, includeStdin, excludeStdin, true)
 
 		// Fetch refs sequentially per arg order; duplicates in later refs will be ignored
+
 		for _, ref := range refs {
 			printProgress(tr.Tr.Get("Fetching reference %s", ref.Refspec()))
 			s := fetchRef(ref.Sha, filter, watcher, excludedRefs, fetchPlaceholderArg)
@@ -549,7 +567,8 @@ func init() {
 		cmd.Flags().BoolVarP(&fetchDryRunArg, "dry-run", "d", false, "Do not fetch, only show what would be fetched")
 		cmd.Flags().BoolVarP(&fetchJsonArg, "json", "j", false, "Give the output in a stable JSON format for scripts")
 		cmd.Flags().BoolVarP(&fetchPlaceholderArg, "placeholder", "v", false, "Fetch LFS files for placeholder (virtual) files")
-		cmd.Flags().BoolVarP(&fetchStdinArg, "stdin", "s", false, "Fetch LFS files from stdin")
-		cmd.Flags().BoolVarP(&fetchBatchArg, "batch", "b", false, "For stdin only: invoke fetch after issuing 'flush'")
+		cmd.Flags().BoolVarP(&fetchStdinArg, "stdin-pointer", "s", false, "Read LFS pointers from stdin (format: path, oid, pointer sha, size)")
+		cmd.Flags().BoolVarP(&fetchBatchArg, "batch", "b", false, "For --stdin: batch transfers until 'flush' is received")
+		cmd.Flags().BoolVar(&fetchIncludeExcludeStdinArg, "stdin", false, "Read --include (-I) or --exclude (-X) paths from stdin (one per line, end with 'flush')")
 	})
 }
